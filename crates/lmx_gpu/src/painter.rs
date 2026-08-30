@@ -2,7 +2,9 @@
 //! clip, by layer. API in logical px; one instanced draw per layer.
 
 use crate::shapes::{self, Instance, INSTANCE_SIZE};
+use crate::waveform::{WaveDraw, WaveId, WaveLevel};
 use crate::{Color, Rect, Vec2, LAYERS};
+use std::ops::Range;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Gradient {
@@ -22,6 +24,8 @@ pub struct Painter {
     bind_group: wgpu::BindGroup,
     instances: wgpu::Buffer,
     capacity: u64,
+    ranges: [(u32, u32); LAYERS],
+    waves: Vec<WaveDraw>,
 }
 
 impl Painter {
@@ -112,6 +116,8 @@ impl Painter {
             bind_group,
             instances,
             capacity,
+            ranges: [(0, 0); LAYERS],
+            waves: Vec::new(),
         }
     }
 
@@ -131,8 +137,32 @@ impl Painter {
         }
         self.layer = 0;
         self.clip_stack.clear();
+        self.waves.clear();
         self.scale = scale;
         self.viewport = viewport;
+    }
+
+    /// Queue a waveform strip (drawn by `WaveformRenderer` between layers 0
+    /// and 1). `first_col`/`cols_per_px` are in the chosen level's columns.
+    pub fn waveform(&mut self, id: WaveId, level: WaveLevel, r: Rect, first_col: f32, cols_per_px: f32, alpha: f32) {
+        let k = self.scale;
+        self.waves.push(WaveDraw {
+            id,
+            level,
+            rect: [r.x * k, r.y * k, r.w * k, r.h * k],
+            clip: self.clip_phys(),
+            first_col,
+            cols_per_px: cols_per_px / k,
+            alpha,
+        });
+    }
+
+    pub fn waves(&self) -> &[WaveDraw] {
+        &self.waves
+    }
+
+    pub fn viewport(&self) -> (u32, u32) {
+        self.viewport
     }
 
     pub fn scale(&self) -> f32 {
@@ -253,15 +283,8 @@ impl Painter {
 
     // ── GPU ──────────────────────────────────────────────────────────────
 
-    /// Upload and draw all layers in order. `clear` fills the target first.
-    pub fn render(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        encoder: &mut wgpu::CommandEncoder,
-        view: &wgpu::TextureView,
-        clear: Option<Color>,
-    ) {
+    /// Upload this frame's instances. Call once, then `draw_layers` as needed.
+    pub fn upload(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
         let total = self.instance_count() as u64;
         if total > self.capacity {
             self.capacity = total.next_power_of_two();
@@ -270,14 +293,17 @@ impl Painter {
         let vp = [self.viewport.0 as f32, self.viewport.1 as f32, 0.0, 0.0];
         queue.write_buffer(&self.uniforms, 0, as_bytes(&vp));
         let mut offset = 0u64;
-        let mut ranges = [(0u32, 0u32); LAYERS];
         for (i, l) in self.layers.iter().enumerate() {
             if !l.is_empty() {
                 queue.write_buffer(&self.instances, offset * INSTANCE_SIZE, as_bytes(l.as_slice()));
             }
-            ranges[i] = (offset as u32, (offset + l.len() as u64) as u32);
+            self.ranges[i] = (offset as u32, (offset + l.len() as u64) as u32);
             offset += l.len() as u64;
         }
+    }
+
+    /// Draw the given layers in one pass. `clear` fills the target first.
+    pub fn draw_layers(&self, encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView, layers: Range<usize>, clear: Option<Color>) {
         let load = match clear {
             Some(c) => {
                 let [r, g, b, a] = c.to_linear();
@@ -298,16 +324,24 @@ impl Painter {
             occlusion_query_set: None,
             multiview_mask: None,
         });
-        if total > 0 {
+        let any = layers.clone().any(|i| self.ranges[i].1 > self.ranges[i].0);
+        if any {
             pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0, &self.bind_group, &[]);
             pass.set_vertex_buffer(0, self.instances.slice(..));
-            for (a, b) in ranges {
+            for i in layers {
+                let (a, b) = self.ranges[i];
                 if b > a {
                     pass.draw(0..6, a..b);
                 }
             }
         }
+    }
+
+    /// Upload and draw everything (no waveform pass) — convenience for simple apps.
+    pub fn render(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView, clear: Option<Color>) {
+        self.upload(device, queue);
+        self.draw_layers(encoder, view, 0..LAYERS, clear);
     }
 }
 

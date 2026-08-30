@@ -153,6 +153,17 @@ impl UiFrame<'_> {
         self.ui.continuous = true;
     }
 
+    /// Clip shapes and text to `r` until `pop_clip`.
+    pub fn push_clip(&mut self, r: Rect) {
+        self.p.push_clip(r);
+        self.t.push_clip(r);
+    }
+
+    pub fn pop_clip(&mut self) {
+        self.p.pop_clip();
+        self.t.pop_clip();
+    }
+
     pub fn mem(&mut self, id: Id) -> &mut Mem {
         self.ui.mem.entry(id).or_default()
     }

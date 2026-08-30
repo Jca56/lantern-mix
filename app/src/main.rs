@@ -11,7 +11,8 @@ pub mod wiring;
 pub mod workers;
 
 fn main() {
-    if let Err(e) = app::App::run() {
+    let paths: Vec<std::path::PathBuf> = std::env::args().skip(1).map(Into::into).collect();
+    if let Err(e) = app::App::run(paths) {
         eprintln!("lantern-mix: {e}");
         std::process::exit(1);
     }

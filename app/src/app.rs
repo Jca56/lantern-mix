@@ -13,16 +13,20 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{Key, NamedKey};
 use winit::window::{Window, WindowId};
 
-use crate::screens::PerformanceScreen;
+use crate::screens::{DeckView, PerformanceScreen};
 use crate::titlebar::{self, TitleAction, TitleBar};
 use crate::wiring::Audio;
+use crate::workers::{Loader, UserEvent};
+use lmx_gpu::WaveformRenderer;
 use lmx_ui::Rect;
+use std::path::PathBuf;
 use winit::window::CursorIcon;
 
 struct Gfx {
     gpu: Gpu,
     painter: Painter,
     text: Text,
+    waves: WaveformRenderer,
 }
 
 pub struct App {
@@ -32,6 +36,9 @@ pub struct App {
     ui: Ui,
     screen: PerformanceScreen,
     audio: Audio,
+    loader: Loader,
+    /// Files from the command line, loaded onto decks 1.. once the loop runs.
+    startup_paths: Vec<PathBuf>,
     titlebar: TitleBar,
     cursor: CursorIcon,
     quit: bool,
@@ -39,7 +46,7 @@ pub struct App {
 }
 
 impl App {
-    pub fn new() -> Self {
+    pub fn new(startup_paths: Vec<PathBuf>) -> Self {
         Self {
             window: None,
             gfx: None,
@@ -47,6 +54,8 @@ impl App {
             ui: Ui::new(Theme::default()),
             screen: PerformanceScreen::default(),
             audio: Audio::start(),
+            loader: Loader::new(),
+            startup_paths,
             titlebar: TitleBar::default(),
             cursor: CursorIcon::Default,
             quit: false,
@@ -54,12 +63,52 @@ impl App {
         }
     }
 
-    pub fn run() -> Result<(), String> {
-        let event_loop = EventLoop::new().map_err(|e| e.to_string())?;
+    pub fn run(paths: Vec<PathBuf>) -> Result<(), String> {
+        let event_loop = EventLoop::<UserEvent>::with_user_event().build().map_err(|e| e.to_string())?;
         // Sleep between events; redraws are requested explicitly.
         event_loop.set_control_flow(ControlFlow::Wait);
-        let mut app = App::new();
+        let mut app = App::new(paths);
+        app.loader.set_proxy(event_loop.create_proxy());
         event_loop.run_app(&mut app).map_err(|e| e.to_string())
+    }
+
+    /// Collect finished loads: upload the waveform, hand the audio to the
+    /// engine, update the deck view.
+    fn collect_loads(&mut self) {
+        while let Some(l) = self.loader.try_recv() {
+            match l.result {
+                Ok((audio, meta, probe, summary)) => {
+                    let Some(gfx) = &mut self.gfx else { continue };
+                    if let Some(old) = self.screen.decks[l.deck].wave.take() {
+                        gfx.waves.remove(old);
+                    }
+                    let id = gfx.waves.upload(&gfx.gpu.device, &gfx.gpu.queue, &summary.fine, &summary.overview);
+                    let title = meta.title.clone().unwrap_or_else(|| {
+                        l.path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default()
+                    });
+                    self.screen.decks[l.deck] = DeckView {
+                        title,
+                        artist: meta.artist.clone().unwrap_or_default(),
+                        wave: Some(id),
+                        columns: summary.fine.len() as u32,
+                        sample_rate: probe.sample_rate,
+                        frames: probe.duration_frames,
+                        bpm_tag: meta.bpm_tag,
+                        key_tag: meta.key_tag.clone(),
+                    };
+                    eprintln!(
+                        "lantern-mix: deck {} ← {} ({} Hz, {:.1} s, {} columns)",
+                        l.deck + 1,
+                        l.path.display(),
+                        probe.sample_rate,
+                        probe.duration_secs(),
+                        summary.fine.len()
+                    );
+                    self.audio.load(l.deck, audio);
+                }
+                Err(e) => eprintln!("lantern-mix: load {} failed: {e}", l.path.display()),
+            }
+        }
     }
 
     fn scale(&self) -> f32 {
@@ -89,11 +138,12 @@ impl App {
         gfx.painter.begin(scale, (w, h));
         gfx.text.begin(scale, w, h);
         let maximized = window.is_maximized();
+        let snap = self.audio.poll();
         let (action, cursor) = {
             let mut f = self.ui.frame(&mut gfx.painter, &mut gfx.text, &self.input, dt);
             let (action, cursor, bar_free) = self.titlebar.draw(&mut f, maximized);
             let area = Rect::new(0.0, titlebar::HEIGHT, f.size.x, f.size.y - titlebar::HEIGHT);
-            self.screen.draw(&mut f, &mut self.audio, area, bar_free);
+            self.screen.draw(&mut f, &mut self.audio, &self.loader, &snap, area, bar_free);
             (action, cursor)
         };
         self.input.begin_frame();
@@ -115,7 +165,10 @@ impl App {
             }
         }
         let bg = self.ui.theme.bg;
-        gfx.painter.render(&gfx.gpu.device, &gfx.gpu.queue, &mut frame.encoder, &frame.view, Some(bg));
+        gfx.painter.upload(&gfx.gpu.device, &gfx.gpu.queue);
+        gfx.painter.draw_layers(&mut frame.encoder, &frame.view, 0..1, Some(bg));
+        gfx.waves.render(&gfx.gpu.device, &gfx.gpu.queue, &mut frame.encoder, &frame.view, (w, h), gfx.painter.waves());
+        gfx.painter.draw_layers(&mut frame.encoder, &frame.view, 1..lmx_gpu::LAYERS, None);
         gfx.text.render(&mut frame.encoder, &frame.view);
         window.pre_present_notify();
         gfx.gpu.end_frame(frame);
@@ -125,7 +178,12 @@ impl App {
     }
 }
 
-impl ApplicationHandler for App {
+impl ApplicationHandler<UserEvent> for App {
+    fn user_event(&mut self, _event_loop: &ActiveEventLoop, _event: UserEvent) {
+        self.collect_loads();
+        self.redraw();
+    }
+
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.window.is_some() {
             return;
@@ -140,8 +198,12 @@ impl ApplicationHandler for App {
         eprintln!("lantern-mix: gpu = {} | scale = {}", gpu.adapter_name, window.scale_factor());
         let painter = Painter::new(&gpu.device, gpu.format);
         let text = Text::new(&gpu);
-        self.gfx = Some(Gfx { gpu, painter, text });
+        let waves = WaveformRenderer::new(&gpu.device, gpu.format);
+        self.gfx = Some(Gfx { gpu, painter, text, waves });
         self.window = Some(window);
+        for (i, p) in std::mem::take(&mut self.startup_paths).into_iter().take(4).enumerate() {
+            self.loader.load(i, p);
+        }
         self.last_frame = Instant::now();
         self.redraw();
     }

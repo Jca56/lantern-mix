@@ -9,4 +9,7 @@ pub mod time;
 pub mod music;
 pub mod hash;
 pub mod paths;
+pub mod audio;
 pub mod error;
+
+pub use audio::TrackAudio;

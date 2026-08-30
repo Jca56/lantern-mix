@@ -22,6 +22,7 @@ pub use context::{Frame, Gpu};
 pub use geom::{Rect, Vec2};
 pub use painter::{Gradient, Painter};
 pub use text::Text;
+pub use waveform::{WaveDraw, WaveId, WaveLevel, WaveformRenderer};
 
 /// Number of draw layers the painter keeps (0 = base, 1 = overlays, 2 = modals).
 pub const LAYERS: usize = 3;

@@ -1,13 +1,15 @@
-//! Track analysis: beatgrid/BPM, key, waveform summaries, loudness. Job-shaped, cancellable, runs on worker threads.
+//! Track analysis: beatgrid/BPM, key, waveform summaries, loudness. Job-shaped,
+//! cancellable, runs on worker threads.
 //!
-//! Design: see `docs/` — this crate is a skeleton; responsibilities and module
-//! boundaries are decided, logic is not written yet.
+//! Design: `docs/03-ANALYSIS.md`.
 #![forbid(unsafe_code)]
 
-pub mod stft;
-pub mod onset;
-pub mod tempo;
-pub mod key;
-pub mod waveform;
-pub mod loudness;
 pub mod job;
+pub mod key;
+pub mod loudness;
+pub mod onset;
+pub mod stft;
+pub mod tempo;
+pub mod waveform;
+
+pub use waveform::{WaveformSummary, FINE_FRAMES, OVERVIEW_FRAMES};
