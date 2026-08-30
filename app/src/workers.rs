@@ -6,7 +6,8 @@
 use lmx_analysis::WaveformSummary;
 use lmx_codec::{Metadata, Probe};
 use lmx_core::TrackAudio;
-use lmx_library::{Track, TrackId};
+use crate::db::{file_stamp, KnownFiles, ScannedFile};
+use lmx_library::TrackId;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
@@ -28,7 +29,7 @@ pub struct Loaded {
 pub enum WorkerMsg {
     Loaded(Loaded),
     /// A library scan finished: every readable audio file under the roots.
-    Scanned(Vec<Track>),
+    Scanned { roots: Vec<PathBuf>, files: Vec<ScannedFile> },
 }
 
 /// Progress 0..1000 per deck, written by workers, read by the UI.
@@ -107,33 +108,43 @@ impl Loader {
         self.rx.try_recv().ok()
     }
 
-    /// Walk `roots` and probe every audio file (headers only) on a thread.
-    pub fn scan(&self, roots: Vec<PathBuf>) {
+    /// Walk `roots`, probe every audio file (headers only) and identify it by
+    /// content hash — unless `known` already has that path with the same
+    /// size and mtime, in which case the id is reused without hashing.
+    pub fn scan(&self, roots: Vec<PathBuf>, known: KnownFiles) {
         let tx = self.tx.clone();
         let proxy = self.proxy.clone();
         std::thread::Builder::new()
             .name("lmx-scan".into())
             .spawn(move || {
-                let mut tracks = Vec::new();
+                let t0 = std::time::Instant::now();
+                let mut files = Vec::new();
+                let mut hashed = 0;
                 for root in &roots {
                     for path in lmx_library::walk_audio_files(root) {
-                        let Ok(p) = lmx_codec::probe(&path) else { continue };
-                        let m = &p.metadata;
-                        tracks.push(Track {
-                            id: TrackId::from_path(&path),
-                            title: m.title.clone().unwrap_or_default(),
-                            artist: m.artist.clone().unwrap_or_default(),
-                            album: m.album.clone().unwrap_or_default(),
-                            bpm: m.bpm_tag,
-                            key: m.key_tag.clone(),
-                            sample_rate: p.sample_rate,
-                            duration_secs: p.duration_secs(),
-                            path,
-                        });
+                        let Some((file_size, file_mtime)) = file_stamp(&path) else { continue };
+                        let Ok(probe) = lmx_codec::probe(&path) else { continue };
+                        let id = match known.get(&path) {
+                            Some((s, m, id)) if *s == file_size && *m == file_mtime => *id,
+                            _ => {
+                                hashed += 1;
+                                match TrackId::from_file(&path, probe.audio_offset) {
+                                    Ok(id) => id,
+                                    Err(_) => continue,
+                                }
+                            }
+                        };
+                        files.push(ScannedFile { id, path, file_size, file_mtime, probe });
                     }
                 }
-                eprintln!("lantern-mix: scanned {} tracks from {} root(s)", tracks.len(), roots.len());
-                let _ = tx.send(WorkerMsg::Scanned(tracks));
+                eprintln!(
+                    "lantern-mix: scanned {} files from {} root(s) ({} hashed) in {:.2}s",
+                    files.len(),
+                    roots.len(),
+                    hashed,
+                    t0.elapsed().as_secs_f32()
+                );
+                let _ = tx.send(WorkerMsg::Scanned { roots, files });
                 if let Some(px) = &proxy {
                     let _ = px.send_event(UserEvent::Wake);
                 }

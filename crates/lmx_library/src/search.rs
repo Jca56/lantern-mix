@@ -37,8 +37,8 @@ pub fn view(tracks: &[Track], query: &str, by: SortBy, desc: bool) -> Vec<usize>
         let ord = match by {
             SortBy::Title => fold(ta.display_title()).cmp(&fold(tb.display_title())),
             SortBy::Artist => fold(&ta.artist).cmp(&fold(&tb.artist)),
-            SortBy::Bpm => ta.bpm.unwrap_or(0.0).partial_cmp(&tb.bpm.unwrap_or(0.0)).unwrap_or(std::cmp::Ordering::Equal),
-            SortBy::Key => ta.key.clone().unwrap_or_default().cmp(&tb.key.clone().unwrap_or_default()),
+            SortBy::Bpm => ta.bpm().unwrap_or(0.0).partial_cmp(&tb.bpm().unwrap_or(0.0)).unwrap_or(std::cmp::Ordering::Equal),
+            SortBy::Key => ta.key_tag.clone().unwrap_or_default().cmp(&tb.key_tag.clone().unwrap_or_default()),
             SortBy::Time => ta.duration_secs.partial_cmp(&tb.duration_secs).unwrap_or(std::cmp::Ordering::Equal),
         };
         if desc { ord.reverse() } else { ord }
@@ -52,7 +52,7 @@ mod tests {
     use crate::model::TrackId;
 
     fn t(title: &str, artist: &str, bpm: f32) -> Track {
-        Track { id: TrackId(title.len() as u64), title: title.into(), artist: artist.into(), bpm: Some(bpm), ..Default::default() }
+        Track { id: TrackId(title.len() as u64), title: title.into(), artist: artist.into(), bpm_tag: Some(bpm), ..Default::default() }
     }
 
     #[test]

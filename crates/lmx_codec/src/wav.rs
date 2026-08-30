@@ -154,6 +154,7 @@ fn header_probe(h: &Header) -> Probe {
         channels: h.fmt.channels,
         bits: h.fmt.bits,
         duration_frames: h.data_len / h.fmt.block_align as u64,
+        audio_offset: h.data_start,
         metadata: h.metadata.clone(),
     }
 }

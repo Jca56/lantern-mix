@@ -5,6 +5,7 @@
 
 pub mod app;
 pub mod browser;
+pub mod db;
 pub mod screens;
 pub mod settings;
 pub mod titlebar;

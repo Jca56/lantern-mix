@@ -22,6 +22,9 @@ pub struct Probe {
     /// Bits per sample in the file (32 for float32, 64 for float64).
     pub bits: u16,
     pub duration_frames: u64,
+    /// Byte offset where sample data starts (after headers/tags) — the
+    /// content hash starts here so retagging keeps a track's identity.
+    pub audio_offset: u64,
     pub metadata: Metadata,
 }
 

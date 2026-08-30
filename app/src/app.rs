@@ -13,6 +13,7 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{Key, NamedKey};
 use winit::window::{Window, WindowId};
 
+use crate::db::Db;
 use crate::screens::{DeckView, PerformanceScreen};
 use crate::settings::Settings;
 use crate::titlebar::{self, TitleAction, TitleBar};
@@ -37,6 +38,7 @@ pub struct App {
     ui: Ui,
     screen: PerformanceScreen,
     audio: Audio,
+    db: Db,
     loader: Loader,
     /// Files from the command line, loaded onto decks 1.. once the loop runs.
     startup_paths: Vec<PathBuf>,
@@ -56,6 +58,7 @@ impl App {
             ui: Ui::new(Theme::default()),
             screen: PerformanceScreen::default(),
             audio: Audio::start(proxy),
+            db: Db::open(),
             loader: Loader::new(),
             startup_paths,
             titlebar: TitleBar::default(),
@@ -75,14 +78,20 @@ impl App {
         event_loop.run_app(&mut app).map_err(|e| e.to_string())
     }
 
+    fn rescan(&mut self) {
+        self.screen.browser.scanning = true;
+        self.loader.scan(self.db.lib.roots.clone(), self.db.known_files());
+    }
+
     /// Collect finished loads: upload the waveform, hand the audio to the
     /// engine, update the deck view.
     fn collect_loads(&mut self) {
         while let Some(msg) = self.loader.try_recv() {
             let l = match msg {
                 WorkerMsg::Loaded(l) => l,
-                WorkerMsg::Scanned(tracks) => {
-                    self.screen.browser.set_tracks(tracks);
+                WorkerMsg::Scanned { roots, files } => {
+                    self.db.merge_scan(&roots, files);
+                    self.screen.browser.scanning = false;
                     continue;
                 }
             };
@@ -96,7 +105,10 @@ impl App {
                     let title = meta.title.clone().unwrap_or_else(|| {
                         l.path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default()
                     });
+                    let track = self.db.ensure_track(&l.path);
+                    let grid = track.and_then(|t| self.db.lib.get(t)).map(|t| t.grid).unwrap_or_default();
                     self.screen.decks[l.deck] = DeckView {
+                        track,
                         title,
                         artist: meta.artist.clone().unwrap_or_default(),
                         wave: Some(id),
@@ -105,11 +117,16 @@ impl App {
                         frames: probe.duration_frames,
                         bpm_tag: meta.bpm_tag,
                         key_tag: meta.key_tag.clone(),
-                        bpm: meta.bpm_tag.filter(|b| *b >= 20.0 && *b <= 400.0).unwrap_or(crate::screens::DEFAULT_BPM),
-                        anchor_frame: 0.0,
+                        bpm: if grid.bpm > 0.0 {
+                            grid.bpm
+                        } else {
+                            meta.bpm_tag.filter(|b| *b >= 20.0 && *b <= 400.0).unwrap_or(crate::screens::DEFAULT_BPM)
+                        },
+                        anchor_frame: grid.anchor_frame,
                         scrub: None,
                         bpm_edit: None,
                         bpm_focus: false,
+                        grid_dirty: false,
                     };
                     eprintln!(
                         "lantern-mix: deck {} ← {} ({} Hz, {:.1} s, {} columns)",
@@ -158,22 +175,21 @@ impl App {
             let mut f = self.ui.frame(&mut gfx.painter, &mut gfx.text, &self.input, dt);
             let (action, cursor, bar_free) = self.titlebar.draw(&mut f, maximized, &self.settings);
             let area = Rect::new(0.0, titlebar::HEIGHT, f.size.x, f.size.y - titlebar::HEIGHT);
-            let ba = self.screen.draw(&mut f, &mut self.audio, &self.loader, &self.settings, &snap, area, bar_free);
+            let ba = self.screen.draw(&mut f, &mut self.audio, &self.loader, &mut self.db, &self.settings, &snap, area, bar_free);
             (action, cursor, ba)
         };
         self.input.begin_frame();
-        for (deck, path) in browser_actions.load {
-            self.loader.load(deck, path);
+        for (deck, id) in browser_actions.load {
+            if let Some(t) = self.db.lib.get(id) {
+                self.loader.load(deck, t.path.clone());
+            }
         }
         if !browser_actions.add_roots.is_empty() {
             for r in browser_actions.add_roots {
-                if !self.settings.roots.contains(&r) {
-                    self.settings.roots.push(r);
-                }
+                self.db.add_root(r);
             }
-            self.settings.save();
             self.screen.browser.scanning = true;
-            self.loader.scan(self.settings.roots.clone());
+            self.loader.scan(self.db.lib.roots.clone(), self.db.known_files());
         }
         if cursor != self.cursor {
             self.cursor = cursor;
@@ -236,15 +252,22 @@ impl ApplicationHandler<UserEvent> for App {
         for (i, p) in std::mem::take(&mut self.startup_paths).into_iter().take(4).enumerate() {
             self.loader.load(i, p);
         }
-        self.screen.browser.scanning = true;
-        self.loader.scan(self.settings.roots.clone());
+        if self.db.lib.roots.is_empty() {
+            for r in self.settings.roots.clone() {
+                self.db.add_root(r);
+            }
+        }
+        self.rescan();
         self.last_frame = Instant::now();
         self.redraw();
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
         match event {
-            WindowEvent::CloseRequested => event_loop.exit(),
+            WindowEvent::CloseRequested => {
+                self.db.snapshot();
+                event_loop.exit();
+            }
             WindowEvent::Resized(s) => {
                 if let Some(g) = &mut self.gfx {
                     g.gpu.resize(s.width, s.height);
@@ -320,6 +343,7 @@ impl ApplicationHandler<UserEvent> for App {
             WindowEvent::RedrawRequested => {
                 self.draw();
                 if self.quit {
+                    self.db.snapshot();
                     event_loop.exit();
                 }
             }

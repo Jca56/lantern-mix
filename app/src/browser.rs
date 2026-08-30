@@ -10,7 +10,6 @@ const ROW_H: f32 = 50.0;
 const DRAG_START_PX: f32 = 10.0;
 
 pub struct Browser {
-    pub library: Library,
     pub scanning: bool,
     query: String,
     search_focus: bool,
@@ -18,6 +17,8 @@ pub struct Browser {
     desc: bool,
     view: Vec<usize>,
     view_dirty: bool,
+    /// Library generation the view was built against.
+    view_gen: u64,
     selected: Option<TrackId>,
     scroll: f32,
     /// A row press that may become a drag: (track, press position).
@@ -29,7 +30,6 @@ pub struct Browser {
 impl Default for Browser {
     fn default() -> Self {
         Self {
-            library: Library::default(),
             scanning: false,
             query: String::new(),
             search_focus: false,
@@ -37,6 +37,7 @@ impl Default for Browser {
             desc: false,
             view: Vec::new(),
             view_dirty: true,
+            view_gen: u64::MAX,
             selected: None,
             scroll: 0.0,
             press: None,
@@ -48,7 +49,8 @@ impl Default for Browser {
 /// What the browser asked the app to do this frame.
 #[derive(Default)]
 pub struct BrowserActions {
-    pub load: Vec<(usize, PathBuf)>,
+    /// (deck, track) to load.
+    pub load: Vec<(usize, TrackId)>,
     pub add_roots: Vec<PathBuf>,
 }
 
@@ -58,31 +60,26 @@ fn fmt_dur(secs: f64) -> String {
 }
 
 impl Browser {
-    pub fn set_tracks(&mut self, tracks: Vec<Track>) {
-        self.library.set_tracks(tracks);
-        self.view_dirty = true;
-        self.scanning = false;
-    }
-
-    fn refresh_view(&mut self) {
-        if self.view_dirty {
-            self.view = search::view(&self.library.tracks, &self.query, self.sort, self.desc);
+    fn refresh_view(&mut self, lib: &Library) {
+        if self.view_dirty || self.view_gen != lib.generation {
+            self.view = search::view(&lib.tracks, &self.query, self.sort, self.desc);
             self.view_dirty = false;
+            self.view_gen = lib.generation;
         }
     }
 
-    fn selected_row(&self) -> Option<usize> {
+    fn selected_row(&self, lib: &Library) -> Option<usize> {
         let id = self.selected?;
-        self.view.iter().position(|&i| self.library.tracks[i].id == id)
+        self.view.iter().position(|&i| lib.tracks[i].id == id)
     }
 
     /// The track currently being dragged (for the ghost + drop handling).
-    pub fn dragging(&self) -> Option<&Track> {
-        self.drag.and_then(|id| self.library.get(id))
+    pub fn dragging<'a>(&self, lib: &'a Library) -> Option<&'a Track> {
+        self.drag.and_then(|id| lib.get(id))
     }
 
     /// Draw the panel. `drop_target` maps a pointer position to a deck.
-    pub fn draw(&mut self, f: &mut UiFrame, rect: Rect, loader: &Loader, drop_target: &dyn Fn(Vec2) -> Option<usize>) -> BrowserActions {
+    pub fn draw(&mut self, f: &mut UiFrame, rect: Rect, lib: &Library, loader: &Loader, drop_target: &dyn Fn(Vec2) -> Option<usize>) -> BrowserActions {
         let th = f.theme().clone();
         let mut actions = BrowserActions::default();
         let _ = loader;
@@ -99,7 +96,7 @@ impl Browser {
         // ── tree column ──
         let mut tree = r.cut_left(250.0);
         r.cut_left(th.gap);
-        let count = self.library.len();
+        let count = lib.len();
         let names = [
             if self.scanning { format!("COLLECTION  …") } else { format!("COLLECTION  {count}") },
             "PLAYLISTS".to_string(),
@@ -157,10 +154,10 @@ impl Browser {
         r.cut_top(10.0);
 
         // ── keyboard: selection + load ──
-        self.refresh_view();
+        self.refresh_view(lib);
         let mut keep = None;
         if !self.search_focus && !self.view.is_empty() {
-            let cur = self.selected_row();
+            let cur = self.selected_row(lib);
             let mut next = cur;
             for _ in 0..f.input.key_count(Key::Down) {
                 next = Some(next.map(|i| (i + 1).min(self.view.len() - 1)).unwrap_or(0));
@@ -176,15 +173,15 @@ impl Browser {
             }
             if next != cur {
                 if let Some(i) = next {
-                    self.selected = Some(self.library.tracks[self.view[i]].id);
+                    self.selected = Some(lib.tracks[self.view[i]].id);
                     keep = Some(i);
                 }
             }
             for ch in f.input.text.chars() {
                 if let Some(d) = ch.to_digit(10) {
                     if (1..=4).contains(&d) {
-                        if let Some(t) = self.selected.and_then(|id| self.library.get(id)) {
-                            actions.load.push((d as usize - 1, t.path.clone()));
+                        if let Some(id) = self.selected {
+                            actions.load.push((d as usize - 1, id));
                         }
                     }
                 }
@@ -197,7 +194,7 @@ impl Browser {
         let mouse = f.input.mouse;
         let mut clicked: Option<TrackId> = None;
         for i in rows.range.clone() {
-            let t = &self.library.tracks[self.view[i]];
+            let t = &lib.tracks[self.view[i]];
             let row = rows.rect(i);
             f.push_scope(i as u64);
             let id = f.id();
@@ -225,24 +222,22 @@ impl Browser {
             }
             if it.released {
                 if let (Some(dragged), Some(deck)) = (self.drag, drop_target(mouse)) {
-                    if let Some(tr) = self.library.get(dragged) {
-                        actions.load.push((deck, tr.path.clone()));
-                    }
+                    actions.load.push((deck, dragged));
                 }
                 self.drag = None;
                 self.press = None;
             }
             let cells = lmx_ui::layout::hstack(Rect::new(row.x, row.y, row.w, row.h), &widths, th.gap);
-            let fg = if selected { th.fg } else { th.fg };
+            let fg = if t.missing { th.warn } else { th.fg };
             f.push_clip(cells[0]);
             f.text_left(cells[0].inset_xy(5.0, 0.0), t.display_title(), th.text, fg);
             f.pop_clip();
             f.push_clip(cells[1]);
             f.text_left(cells[1], &t.artist, th.text, th.fg_dim);
             f.pop_clip();
-            let bpm = t.bpm.map(|b| format!("{b:.1}")).unwrap_or_else(|| "—".into());
-            f.text_left(cells[2], &bpm, th.text, th.fg_dim);
-            let key = t.key.clone().unwrap_or_else(|| "—".into());
+            let bpm = t.bpm().map(|b| format!("{b:.1}")).unwrap_or_else(|| "—".into());
+            f.text_left(cells[2], &bpm, th.text, if t.grid.bpm > 0.0 { th.fg } else { th.fg_dim });
+            let key = t.key_tag.clone().unwrap_or_else(|| "—".into());
             f.text_left(cells[3], &key, th.text, th.fg_dim);
             f.text_left(cells[4], &fmt_dur(t.duration_secs), th.text, th.fg_dim);
         }
@@ -256,7 +251,7 @@ impl Browser {
         }
 
         // ── drag ghost ──
-        if let Some(t) = self.dragging() {
+        if let Some(t) = self.dragging(lib) {
             let label = t.display_title().to_string();
             let w = f.t.width(&label, th.text) + 30.0;
             let g = Rect::new(mouse.x + 15.0, mouse.y - 25.0, w, 50.0);

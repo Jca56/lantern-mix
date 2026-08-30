@@ -1,40 +1,78 @@
 //! Track, Cue, SavedLoop, Playlist, SmartPlaylist, Tag, HistorySet, Library.
 
+use std::collections::HashMap;
+use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
-/// Identity of a track. MVP: a hash of the path; the content hash from
-/// `docs/04-LIBRARY.md` replaces this when the store lands.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+/// Identity of a track: a content hash of (file size, first 1 MiB of audio
+/// data, last 64 KiB). Survives moves and retags; changes on re-encode.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct TrackId(pub u64);
 
 impl TrackId {
-    pub fn from_path(p: &Path) -> Self {
-        let mut h: u64 = 0xcbf29ce484222325;
-        for b in p.to_string_lossy().as_bytes() {
-            h ^= *b as u64;
-            h = h.wrapping_mul(0x100000001b3);
+    /// Hash the file's content. `audio_offset` is where the sample data starts
+    /// (after headers/tags) so retagging leaves the id alone.
+    pub fn from_file(path: &Path, audio_offset: u64) -> std::io::Result<Self> {
+        let mut f = std::fs::File::open(path)?;
+        let size = f.metadata()?.len();
+        let mut h = lmx_core::hash::Hasher::new();
+        h.write_u64(size);
+        let mut buf = vec![0u8; 1 << 20];
+        f.seek(SeekFrom::Start(audio_offset.min(size)))?;
+        let n = read_up_to(&mut f, &mut buf)?;
+        h.write(&buf[..n]);
+        let tail = 64 * 1024;
+        if size > audio_offset + n as u64 + tail {
+            f.seek(SeekFrom::Start(size - tail))?;
+            let n = read_up_to(&mut f, &mut buf[..tail as usize])?;
+            h.write(&buf[..n]);
         }
-        TrackId(h)
+        Ok(TrackId(h.finish()))
     }
+}
+
+fn read_up_to(f: &mut std::fs::File, buf: &mut [u8]) -> std::io::Result<usize> {
+    let mut got = 0;
+    while got < buf.len() {
+        let n = f.read(&mut buf[got..])?;
+        if n == 0 {
+            break;
+        }
+        got += n;
+    }
+    Ok(got)
+}
+
+/// Beat grid. `bpm == 0` means unknown (nothing analyzed or typed yet).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Grid {
+    pub bpm: f32,
+    /// Source frame of bar 1, beat 1.
+    pub anchor_frame: f64,
+    /// User-edited: re-analysis must not overwrite.
+    pub locked: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Track {
     pub id: TrackId,
     pub path: PathBuf,
+    pub file_size: u64,
+    pub file_mtime: u64,
     pub title: String,
     pub artist: String,
     pub album: String,
-    pub bpm: Option<f32>,
-    pub key: Option<String>,
+    pub genre: String,
+    pub comment: String,
+    pub bpm_tag: Option<f32>,
+    pub key_tag: Option<String>,
     pub sample_rate: u32,
     pub duration_secs: f64,
-}
-
-impl Default for TrackId {
-    fn default() -> Self {
-        TrackId(0)
-    }
+    pub grid: Grid,
+    /// Unix seconds when the track entered the collection.
+    pub added: u64,
+    /// File not found at its path during the last scan.
+    pub missing: bool,
 }
 
 impl Track {
@@ -45,6 +83,11 @@ impl Track {
         } else {
             &self.title
         }
+    }
+
+    /// Effective tempo: the grid if known, else the tag.
+    pub fn bpm(&self) -> Option<f32> {
+        if self.grid.bpm > 0.0 { Some(self.grid.bpm) } else { self.bpm_tag }
     }
 }
 
@@ -61,18 +104,47 @@ pub enum SortBy {
 pub struct Library {
     pub roots: Vec<PathBuf>,
     pub tracks: Vec<Track>,
+    index: HashMap<TrackId, usize>,
+    /// Bumps on every change; views cache against it.
+    pub generation: u64,
 }
 
 impl Library {
-    /// Replace the collection with a fresh scan result (dedup by id).
-    pub fn set_tracks(&mut self, mut tracks: Vec<Track>) {
-        tracks.sort_by_key(|t| t.id);
-        tracks.dedup_by_key(|t| t.id);
-        self.tracks = tracks;
+    pub fn rebuild_index(&mut self) {
+        self.index = self.tracks.iter().enumerate().map(|(i, t)| (t.id, i)).collect();
+        self.generation += 1;
     }
 
     pub fn get(&self, id: TrackId) -> Option<&Track> {
-        self.tracks.iter().find(|t| t.id == id)
+        self.index.get(&id).map(|i| &self.tracks[*i])
+    }
+
+    pub fn get_mut(&mut self, id: TrackId) -> Option<&mut Track> {
+        self.generation += 1;
+        self.index.get(&id).map(|i| &mut self.tracks[*i])
+    }
+
+    pub fn by_path(&self, p: &Path) -> Option<&Track> {
+        self.tracks.iter().find(|t| t.path == p)
+    }
+
+    /// Insert or replace by id.
+    pub fn upsert(&mut self, t: Track) {
+        match self.index.get(&t.id) {
+            Some(i) => self.tracks[*i] = t,
+            None => {
+                self.index.insert(t.id, self.tracks.len());
+                self.tracks.push(t);
+            }
+        }
+        self.generation += 1;
+    }
+
+    pub fn remove(&mut self, id: TrackId) -> Option<Track> {
+        let i = self.index.remove(&id)?;
+        let t = self.tracks.remove(i);
+        self.rebuild_index();
+        Some(t)
     }
 
     pub fn len(&self) -> usize {

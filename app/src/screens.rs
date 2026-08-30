@@ -5,6 +5,7 @@
 //! the bottom. Everything derives from the window rect — no magic coordinates.
 
 use crate::browser::{Browser, BrowserActions};
+use crate::db::Db;
 use crate::settings::Settings;
 use crate::wiring::Audio;
 use crate::workers::Loader;
@@ -12,6 +13,7 @@ use lmx_analysis::FINE_FRAMES;
 use lmx_audio::AudioState;
 use lmx_engine::Snapshot;
 use lmx_gpu::WaveId;
+use lmx_library::TrackId;
 use lmx_engine::EngineCommand;
 use lmx_ui::waveform::{GridView, StripView};
 use lmx_ui::{Rect, UiFrame, Vec2};
@@ -23,6 +25,8 @@ const STRIP_SECONDS: f32 = 24.0;
 /// What the UI knows about a loaded deck (the engine knows the audio).
 #[derive(Clone, Debug, Default)]
 pub struct DeckView {
+    /// Library record this deck is playing (grid edits are saved to it).
+    pub track: Option<TrackId>,
     pub title: String,
     pub artist: String,
     pub wave: Option<WaveId>,
@@ -39,6 +43,8 @@ pub struct DeckView {
     /// BPM readout being edited: the text so far.
     pub bpm_edit: Option<String>,
     pub bpm_focus: bool,
+    /// Anchor changed during a drag; written to the library on release.
+    pub grid_dirty: bool,
 }
 
 pub struct PerformanceScreen {
@@ -99,7 +105,7 @@ impl PerformanceScreen {
         self.drop_zones.iter().find(|(_, r)| r.contains(p)).map(|(d, _)| *d).unwrap_or(0)
     }
 
-    pub fn draw(&mut self, f: &mut UiFrame, audio: &mut Audio, loader: &Loader, settings: &Settings, snap: &Snapshot, area: Rect, bar_free: Rect) -> BrowserActions {
+    pub fn draw(&mut self, f: &mut UiFrame, audio: &mut Audio, loader: &Loader, db: &mut Db, settings: &Settings, snap: &Snapshot, area: Rect, bar_free: Rect) -> BrowserActions {
         let th = f.theme().clone();
         let gap = th.gap;
 
@@ -149,7 +155,7 @@ impl PerformanceScreen {
         let strip_h = ((waves.h - 3.0 * 5.0) / 4.0).floor();
         for (slot, deck) in settings.wave_order.decks().into_iter().enumerate() {
             let strip = Rect::new(waves.x, waves.y + slot as f32 * (strip_h + 5.0), waves.w, strip_h);
-            self.strip(f, deck, strip, snap, loader, audio);
+            self.strip(f, deck, strip, snap, loader, audio, db);
             self.drop_zones.push((deck, strip));
         }
 
@@ -169,19 +175,19 @@ impl PerformanceScreen {
         ];
         for (i, rect) in panels {
             f.push_scope(i as u64);
-            self.deck(f, i, rect, snap, audio, loader);
+            self.deck(f, i, rect, snap, audio, loader, db);
             f.pop_scope();
             self.drop_zones.push((i, rect));
         }
         self.mixer(f, mixer, snap);
         let target = move |p: Vec2| zones.iter().find(|(_, r)| r.contains(p)).map(|(d, _)| *d);
-        let actions = self.browser.draw(f, browser, loader, &target);
+        let actions = self.browser.draw(f, browser, &db.lib, loader, &target);
 
         audio.set_tone(self.tone, self.master);
         actions
     }
 
-    fn strip(&mut self, f: &mut UiFrame, i: usize, rect: Rect, snap: &Snapshot, loader: &Loader, audio: &mut Audio) {
+    fn strip(&mut self, f: &mut UiFrame, i: usize, rect: Rect, snap: &Snapshot, loader: &Loader, audio: &mut Audio, db: &mut Db) {
         let dv = &self.decks[i];
         let ds = snap.decks[i];
         let sr = dv.sample_rate.max(1) as f32;
@@ -223,8 +229,9 @@ impl PerformanceScreen {
         let frames_moved = it.drag_cols as f64 * FINE_FRAMES as f64;
         if it.held {
             if it.shift {
-                // slide the grid with the pointer
+                // slide the grid with the pointer; saved on release
                 dv.anchor_frame += frames_moved;
+                dv.grid_dirty = true;
             } else if frames_moved != 0.0 || dv.scrub.is_none() {
                 // scrub: the waveform follows the pointer, so the head moves the other way
                 let cur = dv.scrub.unwrap_or(ds.pos);
@@ -235,10 +242,16 @@ impl PerformanceScreen {
         }
         if it.released {
             dv.scrub = None;
+            if dv.grid_dirty {
+                dv.grid_dirty = false;
+                if let Some(id) = dv.track {
+                    db.set_grid(id, dv.bpm, dv.anchor_frame);
+                }
+            }
         }
     }
 
-    fn deck(&mut self, f: &mut UiFrame, i: usize, rect: Rect, snap: &Snapshot, audio: &mut Audio, loader: &Loader) {
+    fn deck(&mut self, f: &mut UiFrame, i: usize, rect: Rect, snap: &Snapshot, audio: &mut Audio, loader: &Loader, db: &mut Db) {
         let th = f.theme().clone();
         let color = th.deck[i];
         let ds = snap.decks[i];
@@ -267,14 +280,16 @@ impl PerformanceScreen {
         let loaded = ds.loaded;
         {
             let dv = &mut self.decks[i];
+            let mut bpm_changed = false;
             if let Some(text) = dv.bpm_edit.as_mut() {
                 f.push_scope(7);
                 f.text_field(bpm, text, &mut dv.bpm_focus);
                 f.pop_scope();
                 if !dv.bpm_focus {
                     if let Ok(v) = text.trim().parse::<f32>() {
-                        if (20.0..=400.0).contains(&v) {
+                        if (20.0..=400.0).contains(&v) && v != dv.bpm {
                             dv.bpm = v;
+                            bpm_changed = true;
                         }
                     }
                     dv.bpm_edit = None;
@@ -295,7 +310,13 @@ impl PerformanceScreen {
                         let step = if f.input.shift { 1.0 } else { 0.1 };
                         dv.bpm = (dv.bpm + (f.input.wheel.y / 40.0) * step).clamp(20.0, 400.0);
                         dv.bpm = (dv.bpm * 100.0).round() / 100.0;
+                        bpm_changed = true;
                     }
+                }
+            }
+            if bpm_changed {
+                if let Some(id) = dv.track {
+                    db.set_grid(id, dv.bpm, dv.anchor_frame);
                 }
             }
         }
