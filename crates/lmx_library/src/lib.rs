@@ -1,13 +1,17 @@
-//! The collection: tracks, cues, grids, playlists, tags, history; own snapshot+journal storage; scanning; search.
+//! The collection: tracks, cues, grids, playlists, tags, history; own
+//! snapshot+journal storage; scanning; search.
 //!
-//! Design: see `docs/` — this crate is a skeleton; responsibilities and module
-//! boundaries are decided, logic is not written yet.
+//! MVP slice: an in-memory collection rebuilt from folder roots at launch, with
+//! search and sort. Storage, cues and playlists follow (`docs/04-LIBRARY.md`).
 #![forbid(unsafe_code)]
 
+pub mod analysis_cache;
+pub mod format;
 pub mod model;
 pub mod mutation;
-pub mod format;
-pub mod store;
 pub mod scan;
 pub mod search;
-pub mod analysis_cache;
+pub mod store;
+
+pub use model::{Library, SortBy, Track, TrackId};
+pub use scan::walk_audio_files;

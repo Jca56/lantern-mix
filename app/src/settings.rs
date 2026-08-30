@@ -41,11 +41,14 @@ impl WaveOrder {
 #[derive(Clone, Debug)]
 pub struct Settings {
     pub wave_order: WaveOrder,
+    /// Library folders, scanned at launch.
+    pub roots: Vec<PathBuf>,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { wave_order: WaveOrder::Deck3124 }
+        let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
+        Self { wave_order: WaveOrder::Deck3124, roots: vec![home.join("Music/DJ")] }
     }
 }
 
@@ -57,6 +60,7 @@ impl Settings {
     pub fn load() -> Self {
         let mut s = Settings::default();
         let Ok(text) = std::fs::read_to_string(Self::path()) else { return s };
+        let mut roots = Vec::new();
         for line in text.lines() {
             let Some((k, v)) = line.split_once('=') else { continue };
             match k.trim() {
@@ -65,8 +69,12 @@ impl Settings {
                         s.wave_order = o;
                     }
                 }
+                "root" => roots.push(PathBuf::from(v.trim())),
                 _ => {}
             }
+        }
+        if !roots.is_empty() {
+            s.roots = roots;
         }
         s
     }
@@ -74,6 +82,9 @@ impl Settings {
     pub fn save(&self) {
         let mut out = String::new();
         let _ = writeln!(out, "wave_order = {}", self.wave_order.key());
+        for r in &self.roots {
+            let _ = writeln!(out, "root = {}", r.display());
+        }
         let p = Self::path();
         if let Some(dir) = p.parent() {
             let _ = std::fs::create_dir_all(dir);

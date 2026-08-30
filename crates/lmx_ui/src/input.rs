@@ -4,6 +4,25 @@
 use crate::Vec2;
 use std::path::PathBuf;
 
+/// Non-text keys the UI cares about. Printable characters arrive as `text`.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum Key {
+    Backspace,
+    Delete,
+    Enter,
+    Escape,
+    Tab,
+    Up,
+    Down,
+    Left,
+    Right,
+    Home,
+    End,
+    PageUp,
+    PageDown,
+    Space,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum MouseButton {
     Left,
@@ -37,6 +56,8 @@ pub struct Input {
     pub dropped_files: Vec<PathBuf>,
     /// Characters typed this frame.
     pub text: String,
+    /// Named keys pressed this frame (with auto-repeat).
+    pub keys: Vec<Key>,
 }
 
 impl Input {
@@ -48,6 +69,7 @@ impl Input {
         self.wheel = Vec2::ZERO;
         self.dropped_files.clear();
         self.text.clear();
+        self.keys.clear();
     }
 
     pub fn on_cursor(&mut self, p: Vec2) {
@@ -85,7 +107,21 @@ impl Input {
     }
 
     pub fn on_text(&mut self, s: &str) {
-        self.text.push_str(s);
+        // control characters (Enter, Backspace…) come through as keys instead
+        self.text.extend(s.chars().filter(|c| !c.is_control()));
+    }
+
+    pub fn on_key(&mut self, k: Key) {
+        self.keys.push(k);
+    }
+
+    pub fn key(&self, k: Key) -> bool {
+        self.keys.contains(&k)
+    }
+
+    /// Number of times `k` was pressed this frame (auto-repeat).
+    pub fn key_count(&self, k: Key) -> usize {
+        self.keys.iter().filter(|x| **x == k).count()
     }
 
     pub fn down(&self, b: MouseButton) -> bool {

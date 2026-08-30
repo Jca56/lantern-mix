@@ -149,6 +149,59 @@ impl UiFrame<'_> {
         it.clicked
     }
 
+    // ── text field ───────────────────────────────────────────────────────
+
+    /// Single-line text entry. Click focuses; typing edits; Backspace deletes;
+    /// Escape clears and unfocuses; Enter unfocuses; a click elsewhere unfocuses.
+    /// Returns true when `text` changed.
+    #[track_caller]
+    pub fn text_field(&mut self, rect: Rect, text: &mut String, focused: &mut bool) -> bool {
+        let id = self.id();
+        let it = self.interact(id, rect);
+        if it.pressed {
+            *focused = true;
+        } else if self.input.pressed(crate::MouseButton::Left) && !rect.contains(self.input.mouse) {
+            *focused = false;
+        }
+        let mut changed = false;
+        if *focused {
+            if !self.input.text.is_empty() {
+                text.push_str(&self.input.text);
+                changed = true;
+            }
+            for _ in 0..self.input.key_count(crate::Key::Backspace) {
+                if text.pop().is_some() {
+                    changed = true;
+                }
+            }
+            if self.input.key(crate::Key::Escape) {
+                if !text.is_empty() {
+                    changed = true;
+                }
+                text.clear();
+                *focused = false;
+            }
+            if self.input.key(crate::Key::Enter) {
+                *focused = false;
+            }
+        }
+        let th = self.ui.theme.clone();
+        self.p.fill_rrect(rect, 5.0, th.well_deep);
+        self.p.stroke_rrect(rect, 5.0, th.stroke, if *focused { th.accent } else if it.hovered { th.border_hot } else { th.border });
+        let inner = rect.inset_xy(15.0, 0.0);
+        self.push_clip(inner);
+        let w = self.t.width(text, th.text);
+        let x = if w > inner.w { inner.right() - w } else { inner.x };
+        let y = th.text_y(inner.y, inner.h, th.text);
+        self.emit(text, th.text, x, y, th.fg, false);
+        if *focused {
+            let cx = (x + w + 2.0).min(inner.right());
+            self.p.fill_rect(Rect::new(cx, inner.y + 10.0, 5.0, inner.h - 20.0), th.accent);
+        }
+        self.pop_clip();
+        changed
+    }
+
     // ── menus ────────────────────────────────────────────────────────────
 
     /// Menu-bar button: flips `open` on click; drawn "pressed" while open.

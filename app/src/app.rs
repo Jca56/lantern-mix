@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use lmx_gpu::{Gpu, Painter, Text, Vec2};
-use lmx_ui::{Input, MouseButton, Theme, Ui};
+use lmx_ui::{Input, Key as UiKey, MouseButton, Theme, Ui};
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
 use winit::event::{ElementState, MouseScrollDelta, WindowEvent};
@@ -17,7 +17,7 @@ use crate::screens::{DeckView, PerformanceScreen};
 use crate::settings::Settings;
 use crate::titlebar::{self, TitleAction, TitleBar};
 use crate::wiring::Audio;
-use crate::workers::{Loader, UserEvent};
+use crate::workers::{Loader, UserEvent, WorkerMsg};
 use lmx_gpu::WaveformRenderer;
 use lmx_ui::Rect;
 use std::path::PathBuf;
@@ -78,7 +78,14 @@ impl App {
     /// Collect finished loads: upload the waveform, hand the audio to the
     /// engine, update the deck view.
     fn collect_loads(&mut self) {
-        while let Some(l) = self.loader.try_recv() {
+        while let Some(msg) = self.loader.try_recv() {
+            let l = match msg {
+                WorkerMsg::Loaded(l) => l,
+                WorkerMsg::Scanned(tracks) => {
+                    self.screen.browser.set_tracks(tracks);
+                    continue;
+                }
+            };
             match l.result {
                 Ok((audio, meta, probe, summary)) => {
                     let Some(gfx) = &mut self.gfx else { continue };
@@ -142,14 +149,27 @@ impl App {
         gfx.text.begin(scale, w, h);
         let maximized = window.is_maximized();
         let snap = self.audio.poll();
-        let (action, cursor) = {
+        let (action, cursor, browser_actions) = {
             let mut f = self.ui.frame(&mut gfx.painter, &mut gfx.text, &self.input, dt);
             let (action, cursor, bar_free) = self.titlebar.draw(&mut f, maximized, &self.settings);
             let area = Rect::new(0.0, titlebar::HEIGHT, f.size.x, f.size.y - titlebar::HEIGHT);
-            self.screen.draw(&mut f, &mut self.audio, &self.loader, &self.settings, &snap, area, bar_free);
-            (action, cursor)
+            let ba = self.screen.draw(&mut f, &mut self.audio, &self.loader, &self.settings, &snap, area, bar_free);
+            (action, cursor, ba)
         };
         self.input.begin_frame();
+        for (deck, path) in browser_actions.load {
+            self.loader.load(deck, path);
+        }
+        if !browser_actions.add_roots.is_empty() {
+            for r in browser_actions.add_roots {
+                if !self.settings.roots.contains(&r) {
+                    self.settings.roots.push(r);
+                }
+            }
+            self.settings.save();
+            self.screen.browser.scanning = true;
+            self.loader.scan(self.settings.roots.clone());
+        }
         if cursor != self.cursor {
             self.cursor = cursor;
             window.set_cursor(cursor);
@@ -211,6 +231,8 @@ impl ApplicationHandler<UserEvent> for App {
         for (i, p) in std::mem::take(&mut self.startup_paths).into_iter().take(4).enumerate() {
             self.loader.load(i, p);
         }
+        self.screen.browser.scanning = true;
+        self.loader.scan(self.settings.roots.clone());
         self.last_frame = Instant::now();
         self.redraw();
     }
@@ -264,11 +286,27 @@ impl ApplicationHandler<UserEvent> for App {
                 self.redraw();
             }
             WindowEvent::KeyboardInput { event, .. } => {
-                if event.state == ElementState::Pressed && event.logical_key == Key::Named(NamedKey::Escape) {
-                    event_loop.exit();
-                }
-                if let Some(t) = &event.text {
-                    if event.state == ElementState::Pressed {
+                if event.state == ElementState::Pressed {
+                    let named = match &event.logical_key {
+                        Key::Named(NamedKey::Backspace) => Some(UiKey::Backspace),
+                        Key::Named(NamedKey::Delete) => Some(UiKey::Delete),
+                        Key::Named(NamedKey::Enter) => Some(UiKey::Enter),
+                        Key::Named(NamedKey::Escape) => Some(UiKey::Escape),
+                        Key::Named(NamedKey::Tab) => Some(UiKey::Tab),
+                        Key::Named(NamedKey::ArrowUp) => Some(UiKey::Up),
+                        Key::Named(NamedKey::ArrowDown) => Some(UiKey::Down),
+                        Key::Named(NamedKey::ArrowLeft) => Some(UiKey::Left),
+                        Key::Named(NamedKey::ArrowRight) => Some(UiKey::Right),
+                        Key::Named(NamedKey::Home) => Some(UiKey::Home),
+                        Key::Named(NamedKey::End) => Some(UiKey::End),
+                        Key::Named(NamedKey::PageUp) => Some(UiKey::PageUp),
+                        Key::Named(NamedKey::PageDown) => Some(UiKey::PageDown),
+                        Key::Named(NamedKey::Space) => Some(UiKey::Space),
+                        _ => None,
+                    };
+                    if let Some(k) = named {
+                        self.input.on_key(k);
+                    } else if let Some(t) = &event.text {
                         self.input.on_text(t);
                     }
                 }

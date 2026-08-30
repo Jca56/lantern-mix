@@ -4,6 +4,7 @@
 //! Design: `docs/01-ARCHITECTURE.md`, `docs/05-UI.md`.
 
 pub mod app;
+pub mod browser;
 pub mod screens;
 pub mod settings;
 pub mod titlebar;

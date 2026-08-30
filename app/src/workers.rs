@@ -6,6 +6,7 @@
 use lmx_analysis::WaveformSummary;
 use lmx_codec::{Metadata, Probe};
 use lmx_core::TrackAudio;
+use lmx_library::{Track, TrackId};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
@@ -24,12 +25,18 @@ pub struct Loaded {
     pub result: Result<(TrackAudio, Metadata, Probe, WaveformSummary), String>,
 }
 
+pub enum WorkerMsg {
+    Loaded(Loaded),
+    /// A library scan finished: every readable audio file under the roots.
+    Scanned(Vec<Track>),
+}
+
 /// Progress 0..1000 per deck, written by workers, read by the UI.
 pub type Progress = Arc<[AtomicU32; 4]>;
 
 pub struct Loader {
-    tx: Sender<Loaded>,
-    rx: Receiver<Loaded>,
+    tx: Sender<WorkerMsg>,
+    rx: Receiver<WorkerMsg>,
     proxy: Option<EventLoopProxy<UserEvent>>,
     pub progress: Progress,
 }
@@ -82,7 +89,7 @@ impl Loader {
                     Ok((audio, meta, probe, summary))
                 })();
                 progress[deck].store(0, Ordering::Relaxed);
-                let _ = tx.send(Loaded { deck, path, result });
+                let _ = tx.send(WorkerMsg::Loaded(Loaded { deck, path, result }));
                 if let Some(px) = &proxy {
                     let _ = px.send_event(UserEvent::Wake);
                 }
@@ -96,7 +103,41 @@ impl Loader {
         if p == 0 { None } else { Some(p as f32 / 1000.0) }
     }
 
-    pub fn try_recv(&self) -> Option<Loaded> {
+    pub fn try_recv(&self) -> Option<WorkerMsg> {
         self.rx.try_recv().ok()
+    }
+
+    /// Walk `roots` and probe every audio file (headers only) on a thread.
+    pub fn scan(&self, roots: Vec<PathBuf>) {
+        let tx = self.tx.clone();
+        let proxy = self.proxy.clone();
+        std::thread::Builder::new()
+            .name("lmx-scan".into())
+            .spawn(move || {
+                let mut tracks = Vec::new();
+                for root in &roots {
+                    for path in lmx_library::walk_audio_files(root) {
+                        let Ok(p) = lmx_codec::probe(&path) else { continue };
+                        let m = &p.metadata;
+                        tracks.push(Track {
+                            id: TrackId::from_path(&path),
+                            title: m.title.clone().unwrap_or_default(),
+                            artist: m.artist.clone().unwrap_or_default(),
+                            album: m.album.clone().unwrap_or_default(),
+                            bpm: m.bpm_tag,
+                            key: m.key_tag.clone(),
+                            sample_rate: p.sample_rate,
+                            duration_secs: p.duration_secs(),
+                            path,
+                        });
+                    }
+                }
+                eprintln!("lantern-mix: scanned {} tracks from {} root(s)", tracks.len(), roots.len());
+                let _ = tx.send(WorkerMsg::Scanned(tracks));
+                if let Some(px) = &proxy {
+                    let _ = px.send_event(UserEvent::Wake);
+                }
+            })
+            .expect("spawn scan");
     }
 }

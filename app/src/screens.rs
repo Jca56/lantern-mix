@@ -4,6 +4,7 @@
 //! decks 1/3 left and 2/4 right around a center mixer column, browser along
 //! the bottom. Everything derives from the window rect — no magic coordinates.
 
+use crate::browser::{Browser, BrowserActions};
 use crate::settings::Settings;
 use crate::wiring::Audio;
 use crate::workers::Loader;
@@ -12,7 +13,7 @@ use lmx_audio::AudioState;
 use lmx_engine::Snapshot;
 use lmx_gpu::WaveId;
 use lmx_ui::waveform::StripView;
-use lmx_ui::{Color, Rect, UiFrame, Vec2};
+use lmx_ui::{Rect, UiFrame, Vec2};
 use std::path::PathBuf;
 
 /// Seconds of audio visible across a waveform strip.
@@ -47,6 +48,7 @@ pub struct PerformanceScreen {
     tone: bool,
     /// Rects of the last frame's drop targets: (deck, rect).
     drop_zones: Vec<(usize, Rect)>,
+    pub browser: Browser,
 }
 
 impl Default for PerformanceScreen {
@@ -66,6 +68,7 @@ impl Default for PerformanceScreen {
             master: 0.75,
             tone: false,
             drop_zones: Vec::new(),
+            browser: Browser::default(),
         }
     }
 }
@@ -86,7 +89,7 @@ impl PerformanceScreen {
         self.drop_zones.iter().find(|(_, r)| r.contains(p)).map(|(d, _)| *d).unwrap_or(0)
     }
 
-    pub fn draw(&mut self, f: &mut UiFrame, audio: &mut Audio, loader: &Loader, settings: &Settings, snap: &Snapshot, area: Rect, bar_free: Rect) {
+    pub fn draw(&mut self, f: &mut UiFrame, audio: &mut Audio, loader: &Loader, settings: &Settings, snap: &Snapshot, area: Rect, bar_free: Rect) -> BrowserActions {
         let th = f.theme().clone();
         let gap = th.gap;
 
@@ -94,15 +97,15 @@ impl PerformanceScreen {
             f.animate();
         }
 
-        // dropped files → load into the deck under the pointer
-        let drops: Vec<PathBuf> = f.input.dropped_files.clone();
+        // dropped files → load into the deck under the pointer (folders go to the browser)
+        let drops: Vec<PathBuf> = f.input.dropped_files.iter().filter(|p| p.is_file()).cloned().collect();
         if !drops.is_empty() {
             let deck = self.drop_target(f.input.mouse);
             for (i, p) in drops.into_iter().enumerate() {
                 loader.load((deck + i) % 4, p);
             }
         }
-        self.drop_zones.clear();
+        let zones = std::mem::take(&mut self.drop_zones);
 
         // ── title-bar status: tone + audio state ──
         if bar_free.w > 300.0 {
@@ -161,9 +164,11 @@ impl PerformanceScreen {
             self.drop_zones.push((i, rect));
         }
         self.mixer(f, mixer, snap);
-        self.browser(f, browser);
+        let target = move |p: Vec2| zones.iter().find(|(_, r)| r.contains(p)).map(|(d, _)| *d);
+        let actions = self.browser.draw(f, browser, loader, &target);
 
         audio.set_tone(self.tone, self.master);
+        actions
     }
 
     fn strip(&mut self, f: &mut UiFrame, i: usize, rect: Rect, snap: &Snapshot, loader: &Loader) {
@@ -328,39 +333,6 @@ impl PerformanceScreen {
             let mut xr = r.cut_top(xf_h);
             xr.cut_left(gutter_w);
             f.crossfader(xr, &mut self.xfader);
-        }
-    }
-
-    fn browser(&mut self, f: &mut UiFrame, rect: Rect) {
-        let th = f.theme().clone();
-        f.panel(rect);
-        let mut r = rect.inset(th.pad);
-        let mut tree = r.cut_left(250.0);
-        r.cut_left(th.gap);
-        for (n, name) in ["COLLECTION", "PLAYLISTS", "TAGS", "HISTORY"].iter().enumerate() {
-            if tree.h < 50.0 {
-                break;
-            }
-            let row = tree.cut_top(50.0);
-            if n == 0 {
-                f.p.fill_rrect(row, 5.0, th.well);
-            }
-            f.text_left(row.inset_xy(10.0, 0.0), name, th.text, if n == 0 { th.fg } else { th.fg_dim });
-        }
-        let head = r.cut_top(35.0);
-        let cols = lmx_ui::layout::hstack(head, &[0.0, 0.0, 120.0, 100.0, 120.0], th.gap);
-        for (c, name) in cols.iter().zip(["TITLE", "ARTIST", "BPM", "KEY", "TIME"]) {
-            f.text_left(*c, name, th.text_small, th.fg_dim);
-        }
-        f.p.fill_rect(Rect::new(r.x, head.bottom(), r.w, 5.0), th.border);
-        r.cut_top(10.0);
-        let mut n = 0;
-        while r.h >= 50.0 {
-            let row = r.cut_top(50.0);
-            if n % 2 == 1 {
-                f.p.fill_rect(row, Color::rgba(1.0, 1.0, 1.0, 0.03));
-            }
-            n += 1;
         }
     }
 }

@@ -20,7 +20,7 @@ pub mod waveform;
 pub mod widgets;
 
 pub use id::Id;
-pub use input::{Input, MouseButton};
+pub use input::{Input, Key, MouseButton};
 pub use lmx_gpu::{Color, Gradient, Painter, Rect, Text, Vec2};
 pub use theme::Theme;
 pub use ui::{Interaction, Ui, UiFrame};
