@@ -2,6 +2,7 @@
 //! draws our own — drag area, edge/corner resize zones, and the standard
 //! minimize / maximize / close controls on the right.
 
+use crate::settings::{Settings, WaveOrder};
 use lmx_ui::{Rect, UiFrame, Vec2};
 use std::time::Instant;
 use winit::window::{CursorIcon, ResizeDirection};
@@ -20,18 +21,20 @@ pub enum TitleAction {
     Close,
     Drag,
     Resize(ResizeDirection),
+    SetWaveOrder(WaveOrder),
 }
 
 #[derive(Default)]
 pub struct TitleBar {
     last_click: Option<Instant>,
+    view_open: bool,
 }
 
 impl TitleBar {
     /// Draws the bar across the top of the window. Returns what the user asked
     /// for, the cursor the window should show, and the bar's free left area
     /// (the screen may put small status widgets there).
-    pub fn draw(&mut self, f: &mut UiFrame, maximized: bool) -> (TitleAction, CursorIcon, Rect) {
+    pub fn draw(&mut self, f: &mut UiFrame, maximized: bool, settings: &Settings) -> (TitleAction, CursorIcon, Rect) {
         let th = f.theme().clone();
         let bar = Rect::new(0.0, 0.0, f.size.x, HEIGHT);
         f.p.fill_rect(bar, th.panel);
@@ -69,11 +72,21 @@ impl TitleBar {
             action = TitleAction::Close;
         }
 
+        // ── menus, left side ──
+        let mut left = right;
+        let view_btn = left.cut_left(110.0);
+        f.menu_button(view_btn, "VIEW", &mut self.view_open);
+        let orders = [WaveOrder::Deck1234, WaveOrder::Deck3124];
+        let items: Vec<(&str, bool)> = orders.iter().map(|o| (o.label(), *o == settings.wave_order)).collect();
+        if let Some(i) = f.dropdown(view_btn, &mut self.view_open, &items) {
+            action = TitleAction::SetWaveOrder(orders[i]);
+        }
+
         // ── drag area: whatever is left of the bar (status widgets go in
         // the left half; they're drawn by the screen after this, on top) ──
-        let free = Rect::new(right.x + 10.0, right.y + 5.0, (right.w * 0.5).max(0.0), right.h - 10.0);
+        let free = Rect::new(left.x + 10.0, left.y + 5.0, (left.w * 0.5).max(0.0), left.h - 10.0);
         let id = f.id();
-        let it = f.interact(id, right);
+        let it = f.interact(id, left);
         if it.pressed {
             let now = Instant::now();
             let double = self.last_click.map(|t| now.duration_since(t).as_millis() < 400).unwrap_or(false);

@@ -14,6 +14,7 @@ use winit::keyboard::{Key, NamedKey};
 use winit::window::{Window, WindowId};
 
 use crate::screens::{DeckView, PerformanceScreen};
+use crate::settings::Settings;
 use crate::titlebar::{self, TitleAction, TitleBar};
 use crate::wiring::Audio;
 use crate::workers::{Loader, UserEvent};
@@ -40,6 +41,7 @@ pub struct App {
     /// Files from the command line, loaded onto decks 1.. once the loop runs.
     startup_paths: Vec<PathBuf>,
     titlebar: TitleBar,
+    settings: Settings,
     cursor: CursorIcon,
     quit: bool,
     last_frame: Instant,
@@ -57,6 +59,7 @@ impl App {
             loader: Loader::new(),
             startup_paths,
             titlebar: TitleBar::default(),
+            settings: Settings::load(),
             cursor: CursorIcon::Default,
             quit: false,
             last_frame: Instant::now(),
@@ -141,9 +144,9 @@ impl App {
         let snap = self.audio.poll();
         let (action, cursor) = {
             let mut f = self.ui.frame(&mut gfx.painter, &mut gfx.text, &self.input, dt);
-            let (action, cursor, bar_free) = self.titlebar.draw(&mut f, maximized);
+            let (action, cursor, bar_free) = self.titlebar.draw(&mut f, maximized, &self.settings);
             let area = Rect::new(0.0, titlebar::HEIGHT, f.size.x, f.size.y - titlebar::HEIGHT);
-            self.screen.draw(&mut f, &mut self.audio, &self.loader, &snap, area, bar_free);
+            self.screen.draw(&mut f, &mut self.audio, &self.loader, &self.settings, &snap, area, bar_free);
             (action, cursor)
         };
         self.input.begin_frame();
@@ -162,6 +165,10 @@ impl App {
             }
             TitleAction::Resize(dir) => {
                 let _ = window.drag_resize_window(dir);
+            }
+            TitleAction::SetWaveOrder(o) => {
+                self.settings.wave_order = o;
+                self.settings.save();
             }
         }
         let bg = self.ui.theme.bg;

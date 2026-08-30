@@ -4,6 +4,7 @@
 //! decks 1/3 left and 2/4 right around a center mixer column, browser along
 //! the bottom. Everything derives from the window rect — no magic coordinates.
 
+use crate::settings::Settings;
 use crate::wiring::Audio;
 use crate::workers::Loader;
 use lmx_analysis::FINE_FRAMES;
@@ -85,7 +86,7 @@ impl PerformanceScreen {
         self.drop_zones.iter().find(|(_, r)| r.contains(p)).map(|(d, _)| *d).unwrap_or(0)
     }
 
-    pub fn draw(&mut self, f: &mut UiFrame, audio: &mut Audio, loader: &Loader, snap: &Snapshot, area: Rect, bar_free: Rect) {
+    pub fn draw(&mut self, f: &mut UiFrame, audio: &mut Audio, loader: &Loader, settings: &Settings, snap: &Snapshot, area: Rect, bar_free: Rect) {
         let th = f.theme().clone();
         let gap = th.gap;
 
@@ -133,10 +134,10 @@ impl PerformanceScreen {
         let browser = r;
 
         let strip_h = ((waves.h - 3.0 * 5.0) / 4.0).floor();
-        for i in 0..4 {
-            let strip = Rect::new(waves.x, waves.y + i as f32 * (strip_h + 5.0), waves.w, strip_h);
-            self.strip(f, i, strip, snap, loader);
-            self.drop_zones.push((i, strip));
+        for (slot, deck) in settings.wave_order.decks().into_iter().enumerate() {
+            let strip = Rect::new(waves.x, waves.y + slot as f32 * (strip_h + 5.0), waves.w, strip_h);
+            self.strip(f, deck, strip, snap, loader);
+            self.drop_zones.push((deck, strip));
         }
 
         let side_w = ((decks.w - 2.0 * gap) * 0.38).floor();

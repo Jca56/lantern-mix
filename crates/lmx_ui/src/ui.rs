@@ -28,6 +28,8 @@ pub struct Ui {
     /// A press/release/click changed state this frame: draw one more frame so
     /// the result is visible (and pushed downstream) without waiting for input.
     repaint_once: bool,
+    /// While set (this frame), only widgets intersecting it receive the pointer.
+    modal: Option<Rect>,
     time: f64,
 }
 
@@ -62,6 +64,7 @@ impl Ui {
             scope_hash: 0,
             continuous: false,
             repaint_once: false,
+            modal: None,
             time: 0.0,
         }
     }
@@ -70,6 +73,7 @@ impl Ui {
     pub fn frame<'a>(&'a mut self, p: &'a mut Painter, t: &'a mut Text, input: &'a Input, dt: f32) -> UiFrame<'a> {
         self.continuous = false;
         self.repaint_once = false;
+        self.modal = None;
         self.time += dt as f64;
         self.scope.clear();
         self.scope_hash = 0;
@@ -153,6 +157,12 @@ impl UiFrame<'_> {
         self.ui.continuous = true;
     }
 
+    /// Route the pointer only to widgets inside `r` for the rest of this frame
+    /// (open menus, modals). Call before drawing what should be blocked.
+    pub fn set_modal(&mut self, r: Rect) {
+        self.ui.modal = Some(r);
+    }
+
     /// Clip shapes and text to `r` until `pop_clip`.
     pub fn push_clip(&mut self, r: Rect) {
         self.p.push_clip(r);
@@ -179,7 +189,8 @@ impl UiFrame<'_> {
     /// Pointer interaction for a rect-shaped widget. Call once per widget per frame.
     pub fn interact(&mut self, id: Id, rect: Rect) -> Interaction {
         let mouse = self.input.mouse;
-        let inside = self.input.mouse_in_window && rect.contains(mouse);
+        let blocked = self.ui.modal.map(|m| m.intersect(&rect).is_empty()).unwrap_or(false);
+        let inside = self.input.mouse_in_window && rect.contains(mouse) && !blocked;
         let mine = self.ui.active == Some(id);
         let hovered = inside && (self.ui.active.is_none() || mine);
         if hovered {

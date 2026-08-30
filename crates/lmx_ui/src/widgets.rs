@@ -136,6 +136,71 @@ impl UiFrame<'_> {
         it.clicked
     }
 
+    // ── menus ────────────────────────────────────────────────────────────
+
+    /// Menu-bar button: flips `open` on click; drawn "pressed" while open.
+    #[track_caller]
+    pub fn menu_button(&mut self, rect: Rect, label: &str, open: &mut bool) -> bool {
+        let id = self.id();
+        let it = self.interact(id, rect);
+        if it.clicked {
+            *open = !*open;
+        }
+        let th = self.ui.theme.clone();
+        if *open || it.hovered {
+            self.p.fill_rrect(rect, 5.0, th.well);
+        }
+        let fg = if *open { th.fg } else { th.fg_dim };
+        self.text_centered(rect, label, th.text_small, fg);
+        it.clicked
+    }
+
+    /// Dropdown under `anchor` while `open`: one row per item, `checked` items
+    /// carry a dot. Returns the clicked index. A press outside closes it. The
+    /// menu is modal for the rest of the frame.
+    #[track_caller]
+    pub fn dropdown(&mut self, anchor: Rect, open: &mut bool, items: &[(&str, bool)]) -> Option<usize> {
+        if !*open || items.is_empty() {
+            return None;
+        }
+        let th = self.ui.theme.clone();
+        let row_h = 50.0;
+        let mut w: f32 = 250.0;
+        for (label, _) in items {
+            w = w.max(self.t.width(label, th.text) + 80.0);
+        }
+        let panel = Rect::new(anchor.x, anchor.bottom(), w.min(self.size.x - anchor.x), row_h * items.len() as f32 + 10.0);
+        self.set_modal(panel);
+        if self.input.pressed(crate::MouseButton::Left) && !panel.contains(self.input.mouse) {
+            *open = false;
+            return None;
+        }
+        let base = self.id();
+        let old_layer = self.p.layer();
+        self.p.set_layer(2);
+        self.p.fill_rrect(panel, 5.0, th.panel);
+        self.p.stroke_rrect(panel, 5.0, th.stroke, th.border);
+        let mut picked = None;
+        for (i, (label, checked)) in items.iter().enumerate() {
+            let row = Rect::new(panel.x + 5.0, panel.y + 5.0 + i as f32 * row_h, panel.w - 10.0, row_h);
+            let it = self.interact(base.with(i as u64), row);
+            if it.hovered {
+                self.p.fill_rrect(row, 5.0, th.well);
+            }
+            if *checked {
+                self.p.circle(Vec2::new(row.x + 25.0, row.center().y), 5.0, th.fg);
+            }
+            let text_rect = Rect::new(row.x + 50.0, row.y, row.w - 50.0, row.h);
+            self.text_left(text_rect, label, th.text, th.fg);
+            if it.clicked {
+                picked = Some(i);
+                *open = false;
+            }
+        }
+        self.p.set_layer(old_layer);
+        picked
+    }
+
     // ── faders ───────────────────────────────────────────────────────────
 
     /// Horizontal fader, 0 at the left. Returns true when the value changed.
