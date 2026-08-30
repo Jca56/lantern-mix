@@ -4,6 +4,7 @@
 //! rects) and draws immediately. Methods that can be clicked/dragged are
 //! `#[track_caller]` so their identity is the app's call site.
 
+use crate::ui::LateText;
 use crate::{Color, Rect, UiFrame, Vec2};
 use std::f32::consts::PI;
 
@@ -16,12 +17,24 @@ const KNOB_DRAG_PX: f32 = 200.0;
 impl UiFrame<'_> {
     // ── text ─────────────────────────────────────────────────────────────
 
+    /// Every text helper ends here: straight to the renderer, or deferred to
+    /// the end of the frame while an overlay is being drawn.
+    fn emit(&mut self, s: &str, size: f32, x: f32, y: f32, color: Color, bold: bool) {
+        if self.late_mode {
+            self.late.push(LateText { s: s.to_string(), size, x, y, color, bold });
+        } else if bold {
+            self.t.draw_bold(s, size, x, y, color);
+        } else {
+            self.t.draw(s, size, x, y, color);
+        }
+    }
+
     pub fn text(&mut self, s: &str, size: f32, pos: Vec2, color: Color) {
-        self.t.draw(s, size, pos.x, pos.y, color);
+        self.emit(s, size, pos.x, pos.y, color, false);
     }
 
     pub fn text_bold(&mut self, s: &str, size: f32, pos: Vec2, color: Color) {
-        self.t.draw_bold(s, size, pos.x, pos.y, color);
+        self.emit(s, size, pos.x, pos.y, color, true);
     }
 
     /// Text centered in `rect` (both axes).
@@ -29,20 +42,20 @@ impl UiFrame<'_> {
         let w = self.t.width(s, size);
         let x = rect.center().x - w * 0.5;
         let y = self.ui.theme.text_y(rect.y, rect.h, size);
-        self.t.draw(s, size, x, y, color);
+        self.emit(s, size, x, y, color, false);
     }
 
     /// Text vertically centered, right-aligned to `rect`.
     pub fn text_right(&mut self, rect: Rect, s: &str, size: f32, color: Color) {
         let w = self.t.width(s, size);
         let y = self.ui.theme.text_y(rect.y, rect.h, size);
-        self.t.draw(s, size, rect.right() - w, y, color);
+        self.emit(s, size, rect.right() - w, y, color, false);
     }
 
     /// Text vertically centered, left-aligned to `rect`.
     pub fn text_left(&mut self, rect: Rect, s: &str, size: f32, color: Color) {
         let y = self.ui.theme.text_y(rect.y, rect.h, size);
-        self.t.draw(s, size, rect.x, y, color);
+        self.emit(s, size, rect.x, y, color, false);
     }
 
     pub fn label(&mut self, pos: Vec2, s: &str) {
@@ -65,10 +78,10 @@ impl UiFrame<'_> {
         let th = self.ui.theme.clone();
         let vw = self.t.width(value, th.readout);
         let y = th.text_y(rect.y, rect.h, th.readout);
-        self.t.draw_bold(value, th.readout, rect.x, y, color);
+        self.emit(value, th.readout, rect.x, y, color, true);
         if !unit.is_empty() {
             let uy = th.text_y(rect.y, rect.h, th.text_small) + (th.readout - th.text_small) * 0.42;
-            self.t.draw(unit, th.text_small, rect.x + vw + 10.0, uy, th.fg_dim);
+            self.emit(unit, th.text_small, rect.x + vw + 10.0, uy, th.fg_dim, false);
         }
     }
 
@@ -177,6 +190,8 @@ impl UiFrame<'_> {
         }
         let base = self.id();
         let old_layer = self.p.layer();
+        self.occlude(panel);
+        self.set_late_mode(true);
         self.p.set_layer(2);
         self.p.fill_rrect(panel, 5.0, th.panel);
         self.p.stroke_rrect(panel, 5.0, th.stroke, th.border);
@@ -198,6 +213,7 @@ impl UiFrame<'_> {
             }
         }
         self.p.set_layer(old_layer);
+        self.set_late_mode(false);
         picked
     }
 
