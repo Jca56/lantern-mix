@@ -13,7 +13,7 @@ pub mod scan;
 pub mod search;
 pub mod store;
 
-pub use model::{Grid, Library, SortBy, Track, TrackId};
+pub use model::{Grid, Library, Playlist, PlaylistId, SortBy, Track, TrackId};
 pub use mutation::Mutation;
 pub use scan::walk_audio_files;
 pub use store::Store;

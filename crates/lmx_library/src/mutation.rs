@@ -2,7 +2,7 @@
 //! for undo. Also the TLV encoding of tracks and mutations.
 
 use crate::format::{Entries, Entry, Writer};
-use crate::model::{Grid, Library, Track, TrackId};
+use crate::model::{Grid, Library, Playlist, PlaylistId, Track, TrackId};
 use std::path::PathBuf;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -17,12 +17,44 @@ pub enum Mutation {
     RemoveRoot(PathBuf),
     /// Put `id` just before `before` in the manual order (`None` = last).
     Move { id: TrackId, before: Option<TrackId> },
+    CreatePlaylist { id: PlaylistId, name: String },
+    RenamePlaylist { id: PlaylistId, name: String },
+    DeletePlaylist(PlaylistId),
+    /// Add (or move, if present) `track` before `before` in playlist `id`.
+    PlaylistPlace { id: PlaylistId, track: TrackId, before: Option<TrackId> },
+    PlaylistRemove { id: PlaylistId, track: TrackId },
 }
 
 impl Mutation {
     pub fn apply(&self, lib: &mut Library) {
         match self {
             Mutation::Move { id, before } => lib.move_before(*id, *before),
+            Mutation::CreatePlaylist { id, name } => {
+                if lib.playlist(*id).is_none() {
+                    lib.playlists.push(Playlist { id: *id, name: name.clone(), tracks: Vec::new() });
+                    lib.generation += 1;
+                }
+            }
+            Mutation::RenamePlaylist { id, name } => {
+                if let Some(p) = lib.playlist_mut(*id) {
+                    p.name = name.clone();
+                }
+            }
+            Mutation::DeletePlaylist(id) => {
+                lib.playlists.retain(|p| p.id != *id);
+                lib.generation += 1;
+            }
+            Mutation::PlaylistPlace { id, track, before } => {
+                let known = lib.get(*track).is_some();
+                if let (Some(p), true) = (lib.playlist_mut(*id), known) {
+                    p.place(*track, *before);
+                }
+            }
+            Mutation::PlaylistRemove { id, track } => {
+                if let Some(p) = lib.playlist_mut(*id) {
+                    p.tracks.retain(|x| x != track);
+                }
+            }
             Mutation::Upsert(t) => lib.upsert(t.clone()),
             Mutation::Remove(id) => {
                 lib.remove(*id);
@@ -154,6 +186,8 @@ mod mt {
     pub const SIZE: u16 = 8;
     pub const MTIME: u16 = 9;
     pub const BEFORE: u16 = 10;
+    pub const PLAYLIST: u16 = 11;
+    pub const NAME: u16 = 12;
 }
 
 impl Mutation {
@@ -202,6 +236,33 @@ impl Mutation {
                     w.u64(mt::BEFORE, b.0);
                 }
             }
+            Mutation::CreatePlaylist { id, name } => {
+                w.u8(mt::KIND, 9);
+                w.u64(mt::PLAYLIST, id.0);
+                w.str(mt::NAME, name);
+            }
+            Mutation::RenamePlaylist { id, name } => {
+                w.u8(mt::KIND, 10);
+                w.u64(mt::PLAYLIST, id.0);
+                w.str(mt::NAME, name);
+            }
+            Mutation::DeletePlaylist(id) => {
+                w.u8(mt::KIND, 11);
+                w.u64(mt::PLAYLIST, id.0);
+            }
+            Mutation::PlaylistPlace { id, track, before } => {
+                w.u8(mt::KIND, 12);
+                w.u64(mt::PLAYLIST, id.0);
+                w.u64(mt::ID, track.0);
+                if let Some(b) = before {
+                    w.u64(mt::BEFORE, b.0);
+                }
+            }
+            Mutation::PlaylistRemove { id, track } => {
+                w.u8(mt::KIND, 13);
+                w.u64(mt::PLAYLIST, id.0);
+                w.u64(mt::ID, track.0);
+            }
         }
         w.finish()
     }
@@ -210,9 +271,13 @@ impl Mutation {
         let (mut kind, mut track, mut id, mut bpm, mut anchor, mut path, mut flag, mut size, mut mtime) =
             (0u8, None, TrackId(0), 0.0f32, 0.0f64, PathBuf::new(), false, 0u64, 0u64);
         let mut before = None;
+        let mut playlist = PlaylistId(0);
+        let mut name = String::new();
         for e in Entries::new(bytes) {
             match e.tag {
                 mt::BEFORE => before = Some(TrackId(e.u64()?)),
+                mt::PLAYLIST => playlist = PlaylistId(e.u64()?),
+                mt::NAME => name = e.str()?.to_string(),
                 mt::KIND => kind = e.u8()?,
                 mt::TRACK => track = decode_track(e),
                 mt::ID => id = TrackId(e.u64()?),
@@ -234,6 +299,11 @@ impl Mutation {
             6 => Mutation::AddRoot(path),
             7 => Mutation::RemoveRoot(path),
             8 => Mutation::Move { id, before },
+            9 => Mutation::CreatePlaylist { id: playlist, name },
+            10 => Mutation::RenamePlaylist { id: playlist, name },
+            11 => Mutation::DeletePlaylist(playlist),
+            12 => Mutation::PlaylistPlace { id: playlist, track: id, before },
+            13 => Mutation::PlaylistRemove { id: playlist, track: id },
             _ => return None,
         })
     }
@@ -273,6 +343,12 @@ mod tests {
             Mutation::RemoveRoot("/music".into()),
             Mutation::Move { id: TrackId(6), before: Some(TrackId(1)) },
             Mutation::Move { id: TrackId(6), before: None },
+            Mutation::CreatePlaylist { id: PlaylistId(9), name: "Set".into() },
+            Mutation::RenamePlaylist { id: PlaylistId(9), name: "Set 2".into() },
+            Mutation::DeletePlaylist(PlaylistId(9)),
+            Mutation::PlaylistPlace { id: PlaylistId(9), track: TrackId(1), before: Some(TrackId(2)) },
+            Mutation::PlaylistPlace { id: PlaylistId(9), track: TrackId(1), before: None },
+            Mutation::PlaylistRemove { id: PlaylistId(9), track: TrackId(1) },
         ];
         for m in ms {
             assert_eq!(Mutation::decode(&m.encode()), Some(m));
@@ -291,6 +367,30 @@ mod tests {
         assert_eq!(lib.len(), 1);
         assert_eq!(lib.get(TrackId(1)).unwrap().grid.bpm, 100.0);
         assert_eq!(lib.roots, vec![PathBuf::from("/m")]);
+    }
+
+    #[test]
+    fn playlists_lifecycle() {
+        let mut lib = Library::default();
+        for n in 1..=3 {
+            Mutation::Upsert(sample_track(n)).apply(&mut lib);
+        }
+        let pl = PlaylistId(77);
+        Mutation::CreatePlaylist { id: pl, name: "Opening".into() }.apply(&mut lib);
+        Mutation::PlaylistPlace { id: pl, track: TrackId(1), before: None }.apply(&mut lib);
+        Mutation::PlaylistPlace { id: pl, track: TrackId(2), before: None }.apply(&mut lib);
+        Mutation::PlaylistPlace { id: pl, track: TrackId(3), before: Some(TrackId(1)) }.apply(&mut lib);
+        Mutation::PlaylistPlace { id: pl, track: TrackId(99), before: None }.apply(&mut lib); // unknown track ignored
+        assert_eq!(lib.playlist(pl).unwrap().tracks, vec![TrackId(3), TrackId(1), TrackId(2)]);
+        Mutation::PlaylistPlace { id: pl, track: TrackId(2), before: Some(TrackId(3)) }.apply(&mut lib);
+        assert_eq!(lib.playlist(pl).unwrap().tracks, vec![TrackId(2), TrackId(3), TrackId(1)]);
+        Mutation::PlaylistRemove { id: pl, track: TrackId(3) }.apply(&mut lib);
+        Mutation::Remove(TrackId(1)).apply(&mut lib); // leaving the collection leaves playlists
+        assert_eq!(lib.playlist(pl).unwrap().tracks, vec![TrackId(2)]);
+        Mutation::RenamePlaylist { id: pl, name: "Closing".into() }.apply(&mut lib);
+        assert_eq!(lib.playlist(pl).unwrap().name, "Closing");
+        Mutation::DeletePlaylist(pl).apply(&mut lib);
+        assert!(lib.playlist(pl).is_none());
     }
 
     #[test]

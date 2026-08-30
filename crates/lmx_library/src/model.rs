@@ -91,6 +91,43 @@ impl Track {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct PlaylistId(pub u64);
+
+impl PlaylistId {
+    /// A fresh id: hash of the name and the clock.
+    pub fn new(name: &str) -> Self {
+        let mut h = lmx_core::hash::Hasher::new();
+        h.write(name.as_bytes());
+        let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos() as u64).unwrap_or(0);
+        h.write_u64(t);
+        PlaylistId(h.finish())
+    }
+}
+
+/// An ordered list of tracks. A track may sit in many playlists.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Playlist {
+    pub id: PlaylistId,
+    pub name: String,
+    pub tracks: Vec<TrackId>,
+}
+
+impl Playlist {
+    pub fn contains(&self, id: TrackId) -> bool {
+        self.tracks.contains(&id)
+    }
+    /// Insert before `before` (or append), moving it if already present.
+    pub fn place(&mut self, id: TrackId, before: Option<TrackId>) {
+        if Some(id) == before {
+            return;
+        }
+        self.tracks.retain(|x| *x != id);
+        let at = before.and_then(|b| self.tracks.iter().position(|x| *x == b)).unwrap_or(self.tracks.len());
+        self.tracks.insert(at, id);
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SortBy {
     /// The user's own order (drag to arrange).
@@ -108,6 +145,7 @@ pub struct Library {
     pub tracks: Vec<Track>,
     /// Manual order of the collection; every track appears exactly once.
     pub order: Vec<TrackId>,
+    pub playlists: Vec<Playlist>,
     index: HashMap<TrackId, usize>,
     /// Bumps on every change; views cache against it.
     pub generation: u64,
@@ -174,8 +212,20 @@ impl Library {
         let i = self.index.remove(&id)?;
         let t = self.tracks.remove(i);
         self.order.retain(|x| *x != id);
+        for p in &mut self.playlists {
+            p.tracks.retain(|x| *x != id);
+        }
         self.rebuild_index();
         Some(t)
+    }
+
+    pub fn playlist(&self, id: PlaylistId) -> Option<&Playlist> {
+        self.playlists.iter().find(|p| p.id == id)
+    }
+
+    pub fn playlist_mut(&mut self, id: PlaylistId) -> Option<&mut Playlist> {
+        self.generation += 1;
+        self.playlists.iter_mut().find(|p| p.id == id)
     }
 
     pub fn len(&self) -> usize {

@@ -1,13 +1,32 @@
-//! The browser panel: tree column, search field, virtualized track table with
-//! sortable headers, selection, keys 1–4 to load, row drag onto decks.
+//! The browser panel: sidebar (search, collection, playlists), virtualized
+//! track table with sortable headers, selection, keys 1–4 to load, row drag
+//! onto decks / playlists / other rows (manual order).
 
 use crate::workers::Loader;
-use lmx_library::{search, Library, SortBy, Track, TrackId};
+use lmx_library::{search, Library, Mutation, PlaylistId, SortBy, TrackId};
 use lmx_ui::{Color, Key, Rect, UiFrame, Vec2};
 use std::path::PathBuf;
+use std::time::Instant;
 
 const ROW_H: f32 = 50.0;
 const DRAG_START_PX: f32 = 10.0;
+const SIDE_W: f32 = 300.0;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum View {
+    Collection,
+    Playlist(PlaylistId),
+}
+
+#[derive(Clone, Copy)]
+enum SideItem {
+    Collection,
+    PlaylistsHeader,
+    Playlist(PlaylistId),
+    NewPlaylist,
+    Tags,
+    History,
+}
 
 pub struct Browser {
     pub scanning: bool,
@@ -15,16 +34,20 @@ pub struct Browser {
     search_focus: bool,
     sort: SortBy,
     desc: bool,
-    view: Vec<usize>,
-    view_dirty: bool,
-    /// Library generation the view was built against.
-    view_gen: u64,
+    view: View,
+    rows: Vec<usize>,
+    rows_dirty: bool,
+    rows_gen: u64,
     selected: Option<TrackId>,
     scroll: f32,
+    side_scroll: f32,
     /// A row press that may become a drag: (track, press position).
     press: Option<(TrackId, Vec2)>,
     /// Track being dragged over the window.
     drag: Option<TrackId>,
+    /// Playlist being renamed: (id, text, field focus).
+    rename: Option<(PlaylistId, String, bool)>,
+    last_click: Option<(PlaylistId, Instant)>,
 }
 
 impl Default for Browser {
@@ -35,13 +58,17 @@ impl Default for Browser {
             search_focus: false,
             sort: SortBy::Manual,
             desc: false,
-            view: Vec::new(),
-            view_dirty: true,
-            view_gen: u64::MAX,
+            view: View::Collection,
+            rows: Vec::new(),
+            rows_dirty: true,
+            rows_gen: u64::MAX,
             selected: None,
             scroll: 0.0,
+            side_scroll: 0.0,
             press: None,
             drag: None,
+            rename: None,
+            last_click: None,
         }
     }
 }
@@ -52,8 +79,7 @@ pub struct BrowserActions {
     /// (deck, track) to load.
     pub load: Vec<(usize, TrackId)>,
     pub add_roots: Vec<PathBuf>,
-    /// Put a track before another (`None` = last) in the manual order.
-    pub reorder: Option<(TrackId, Option<TrackId>)>,
+    pub mutations: Vec<Mutation>,
 }
 
 fn fmt_dur(secs: f64) -> String {
@@ -62,22 +88,28 @@ fn fmt_dur(secs: f64) -> String {
 }
 
 impl Browser {
-    fn refresh_view(&mut self, lib: &Library) {
-        if self.view_dirty || self.view_gen != lib.generation {
-            self.view = search::view(lib, &self.query, self.sort, self.desc);
-            self.view_dirty = false;
-            self.view_gen = lib.generation;
+    fn refresh_rows(&mut self, lib: &Library) {
+        if self.rows_dirty || self.rows_gen != lib.generation {
+            self.rows = match self.view {
+                View::Collection => search::view(lib, &self.query, self.sort, self.desc),
+                View::Playlist(p) => search::playlist_view(lib, p, &self.query, self.sort, self.desc),
+            };
+            self.rows_dirty = false;
+            self.rows_gen = lib.generation;
         }
     }
 
     fn selected_row(&self, lib: &Library) -> Option<usize> {
         let id = self.selected?;
-        self.view.iter().position(|&i| lib.tracks[i].id == id)
+        self.rows.iter().position(|&i| lib.tracks[i].id == id)
     }
 
-    /// The track currently being dragged (for the ghost + drop handling).
-    pub fn dragging<'a>(&self, lib: &'a Library) -> Option<&'a Track> {
-        self.drag.and_then(|id| lib.get(id))
+    fn set_view(&mut self, v: View) {
+        if self.view != v {
+            self.view = v;
+            self.rows_dirty = true;
+            self.scroll = 0.0;
+        }
     }
 
     /// Draw the panel. `drop_target` maps a pointer position to a deck.
@@ -87,48 +119,23 @@ impl Browser {
         let _ = loader;
         f.panel(rect);
         let mut r = rect.inset(th.pad);
+        let mouse = f.input.mouse;
 
-        // folders dropped on the browser become roots
         for p in &f.input.dropped_files {
             if p.is_dir() {
                 actions.add_roots.push(p.clone());
             }
         }
+        if let View::Playlist(p) = self.view {
+            if lib.playlist(p).is_none() {
+                self.set_view(View::Collection);
+            }
+        }
 
-        // ── sidebar: search on top, tree below ──
-        let side = r.cut_left(300.0);
+        // ── sidebar ──
+        let side = r.cut_left(SIDE_W);
         r.cut_left(th.gap);
-        f.p.fill_rrect(side, 5.0, th.well_deep);
-        f.p.fill_rect(Rect::new(side.right() - 5.0, side.y, 5.0, side.h), th.border);
-        let mut side = side.inset(10.0);
-        let field = side.cut_top(50.0);
-        if f.text_field(field, &mut self.query, &mut self.search_focus) {
-            self.view_dirty = true;
-        }
-        // magnifier at the right edge of the field
-        let mc = Vec2::new(field.right() - 25.0, field.center().y - 5.0);
-        f.p.circle_stroke(mc, 10.0, 5.0, th.fg_dim);
-        f.p.line(mc + Vec2::new(7.0, 7.0), mc + Vec2::new(15.0, 15.0), 5.0, th.fg_dim);
-        side.cut_top(th.gap);
-        let count = lib.len();
-        let names = [
-            if self.scanning { "COLLECTION  …".to_string() } else { format!("COLLECTION  {count}") },
-            "PLAYLISTS".to_string(),
-            "TAGS".to_string(),
-            "HISTORY".to_string(),
-        ];
-        for (n, name) in names.iter().enumerate() {
-            if side.h < 50.0 {
-                break;
-            }
-            let row = side.cut_top(50.0);
-            if n == 0 {
-                f.p.fill_rrect(row, 5.0, th.well);
-            }
-            f.push_clip(row);
-            f.text_left(row.inset_xy(10.0, 0.0), name, th.text, if n == 0 { th.fg } else { th.fg_dim });
-            f.pop_clip();
-        }
+        let side_zones = self.sidebar(f, side, lib, &mut actions);
 
         // ── header: # (manual order) then the sortable columns ──
         let head = r.cut_top(35.0);
@@ -150,21 +157,22 @@ impl Browser {
                     self.sort = sorts[i];
                     self.desc = false;
                 }
-                self.view_dirty = true;
+                self.rows_dirty = true;
             }
             f.pop_scope();
         }
         f.p.fill_rect(Rect::new(r.x, head.bottom(), r.w, 5.0), th.border);
         r.cut_top(10.0);
 
-        // ── keyboard: selection + load ──
-        self.refresh_view(lib);
+        // ── keyboard: selection, load, remove ──
+        self.refresh_rows(lib);
+        let typing = self.search_focus || self.rename.as_ref().map(|r| r.2).unwrap_or(false);
         let mut keep = None;
-        if !self.search_focus && !self.view.is_empty() {
+        if !typing && !self.rows.is_empty() {
             let cur = self.selected_row(lib);
             let mut next = cur;
             for _ in 0..f.input.key_count(Key::Down) {
-                next = Some(next.map(|i| (i + 1).min(self.view.len() - 1)).unwrap_or(0));
+                next = Some(next.map(|i| (i + 1).min(self.rows.len() - 1)).unwrap_or(0));
             }
             for _ in 0..f.input.key_count(Key::Up) {
                 next = Some(next.map(|i| i.saturating_sub(1)).unwrap_or(0));
@@ -173,11 +181,11 @@ impl Browser {
                 next = Some(0);
             }
             if f.input.key(Key::End) {
-                next = Some(self.view.len() - 1);
+                next = Some(self.rows.len() - 1);
             }
             if next != cur {
                 if let Some(i) = next {
-                    self.selected = Some(lib.tracks[self.view[i]].id);
+                    self.selected = Some(lib.tracks[self.rows[i]].id);
                     keep = Some(i);
                 }
             }
@@ -190,11 +198,14 @@ impl Browser {
                     }
                 }
             }
+            if f.input.key(Key::Delete) {
+                if let (View::Playlist(p), Some(id)) = (self.view, self.selected) {
+                    actions.mutations.push(Mutation::PlaylistRemove { id: p, track: id });
+                }
+            }
         }
 
         // ── rows ──
-        let mouse = f.input.mouse;
-        // dragging near the top/bottom edge scrolls the list
         if self.drag.is_some() && r.contains(mouse) {
             if mouse.y < r.y + 40.0 {
                 self.scroll -= 8.0;
@@ -202,18 +213,17 @@ impl Browser {
                 self.scroll += 8.0;
             }
         }
-        let rows = f.rows(r, ROW_H, self.view.len(), &mut self.scroll, keep);
-        // where a dragged row would land: index of the row boundary nearest the pointer
+        let rows = f.rows(r, ROW_H, self.rows.len(), &mut self.scroll, keep);
         let reorder_ok = self.sort == SortBy::Manual;
         let insert_at = if self.drag.is_some() && reorder_ok && rows.area.contains(mouse) {
-            Some((((mouse.y - rows.area.y + self.scroll) / ROW_H).round().max(0.0) as usize).min(self.view.len()))
+            Some((((mouse.y - rows.area.y + self.scroll) / ROW_H).round().max(0.0) as usize).min(self.rows.len()))
         } else {
             None
         };
         f.push_clip(rows.area);
         let mut clicked: Option<TrackId> = None;
         for i in rows.range.clone() {
-            let t = &lib.tracks[self.view[i]];
+            let t = &lib.tracks[self.rows[i]];
             let row = rows.rect(i);
             f.push_scope(i as u64);
             let id = f.id();
@@ -241,10 +251,17 @@ impl Browser {
             }
             if it.released {
                 if let Some(dragged) = self.drag {
-                    if let Some(at) = insert_at {
-                        let before = self.view.get(at).map(|&vi| lib.tracks[vi].id);
+                    if let Some((pl, _)) = side_zones.iter().find(|(_, z)| z.contains(mouse)) {
+                        if lib.playlist(*pl).map(|p| !p.contains(dragged)).unwrap_or(false) {
+                            actions.mutations.push(Mutation::PlaylistPlace { id: *pl, track: dragged, before: None });
+                        }
+                    } else if let Some(at) = insert_at {
+                        let before = self.rows.get(at).map(|&vi| lib.tracks[vi].id);
                         if before != Some(dragged) {
-                            actions.reorder = Some((dragged, before));
+                            actions.mutations.push(match self.view {
+                                View::Collection => Mutation::Move { id: dragged, before },
+                                View::Playlist(p) => Mutation::PlaylistPlace { id: p, track: dragged, before },
+                            });
                         }
                     } else if let Some(deck) = drop_target(mouse) {
                         actions.load.push((deck, dragged));
@@ -284,7 +301,7 @@ impl Browser {
         }
 
         // ── drag ghost ──
-        if let Some(t) = self.dragging(lib) {
+        if let Some(t) = self.drag.and_then(|id| lib.get(id)) {
             let label = t.display_title().to_string();
             let w = f.t.width(&label, th.text) + 30.0;
             let g = Rect::new(mouse.x + 15.0, mouse.y - 25.0, w, 50.0);
@@ -298,5 +315,136 @@ impl Browser {
             f.set_late_mode(false);
         }
         actions
+    }
+
+    /// Search field + tree. Returns the playlist rows' rects (drop targets).
+    fn sidebar(&mut self, f: &mut UiFrame, side: Rect, lib: &Library, actions: &mut BrowserActions) -> Vec<(PlaylistId, Rect)> {
+        let th = f.theme().clone();
+        let mouse = f.input.mouse;
+        f.p.fill_rrect(side, 5.0, th.well_deep);
+        f.p.fill_rect(Rect::new(side.right() - 5.0, side.y, 5.0, side.h), th.border);
+        let mut side = side.inset(10.0);
+        let field = side.cut_top(50.0);
+        if f.text_field(field, &mut self.query, &mut self.search_focus) {
+            self.rows_dirty = true;
+        }
+        let mc = Vec2::new(field.right() - 25.0, field.center().y - 5.0);
+        f.p.circle_stroke(mc, 10.0, 5.0, th.fg_dim);
+        f.p.line(mc + Vec2::new(7.0, 7.0), mc + Vec2::new(15.0, 15.0), 5.0, th.fg_dim);
+        side.cut_top(th.gap);
+
+        let mut items = vec![SideItem::Collection, SideItem::PlaylistsHeader];
+        items.extend(lib.playlists.iter().map(|p| SideItem::Playlist(p.id)));
+        items.push(SideItem::NewPlaylist);
+        items.push(SideItem::Tags);
+        items.push(SideItem::History);
+
+        let mut zones = Vec::new();
+        f.push_scope(1000);
+        let rows = f.rows(side, ROW_H, items.len(), &mut self.side_scroll, None);
+        f.push_clip(rows.area);
+        for i in rows.range.clone() {
+            let row = rows.rect(i);
+            f.push_scope(i as u64);
+            match items[i] {
+                SideItem::Collection => {
+                    let id = f.id();
+                    let it = f.interact(id, row);
+                    if self.view == View::Collection {
+                        f.p.fill_rrect(row, 5.0, th.well);
+                    } else if it.hovered {
+                        f.p.fill_rrect(row, 5.0, Color::rgba(1.0, 1.0, 1.0, 0.05));
+                    }
+                    let label = if self.scanning { "COLLECTION  …".to_string() } else { format!("COLLECTION  {}", lib.len()) };
+                    f.text_left(row.inset_xy(10.0, 0.0), &label, th.text, th.fg);
+                    if it.clicked {
+                        self.set_view(View::Collection);
+                    }
+                }
+                SideItem::PlaylistsHeader => {
+                    f.text_left(row.inset_xy(10.0, 0.0), "PLAYLISTS", th.text_small, th.fg_dim);
+                }
+                SideItem::Playlist(pid) => {
+                    let Some(p) = lib.playlist(pid) else { continue };
+                    let id = f.id();
+                    let it = f.interact(id, row);
+                    let current = self.view == View::Playlist(pid);
+                    let drop_hover = self.drag.is_some() && row.contains(mouse);
+                    if current || drop_hover {
+                        f.p.fill_rrect(row, 5.0, th.well);
+                    } else if it.hovered {
+                        f.p.fill_rrect(row, 5.0, Color::rgba(1.0, 1.0, 1.0, 0.05));
+                    }
+                    if drop_hover {
+                        f.p.stroke_rrect(row, 5.0, th.stroke, th.accent);
+                    }
+                    zones.push((pid, row));
+                    let label_rect = Rect::new(row.x + 30.0, row.y, row.w - 90.0, row.h);
+                    if let Some((rid, text, focus)) = self.rename.as_mut().filter(|r| r.0 == pid) {
+                        f.text_field(label_rect, text, focus);
+                        if !*focus {
+                            let name = text.trim().to_string();
+                            if !name.is_empty() && name != p.name {
+                                actions.mutations.push(Mutation::RenamePlaylist { id: *rid, name });
+                            }
+                            self.rename = None;
+                        }
+                    } else {
+                        f.push_clip(label_rect);
+                        f.text_left(label_rect, &format!("{}  {}", p.name, p.tracks.len()), th.text, if current { th.fg } else { th.fg_dim });
+                        f.pop_clip();
+                        if it.clicked {
+                            let now = Instant::now();
+                            let double = self.last_click.map(|(l, t)| l == pid && now.duration_since(t).as_millis() < 400).unwrap_or(false);
+                            self.last_click = Some((pid, now));
+                            if double {
+                                self.rename = Some((pid, p.name.clone(), true));
+                            } else {
+                                self.set_view(View::Playlist(pid));
+                            }
+                        }
+                    }
+                    // delete control on hover
+                    if it.hovered || current {
+                        let x = Rect::new(row.right() - 50.0, row.y, 50.0, row.h);
+                        f.push_scope(9);
+                        let xid = f.id();
+                        let xit = f.interact(xid, x);
+                        f.pop_scope();
+                        let c = if xit.hovered { th.warn } else { th.fg_dim };
+                        let ic = x.centered(15.0, 15.0);
+                        f.p.line(ic.min(), ic.max(), 5.0, c);
+                        f.p.line(Vec2::new(ic.right(), ic.y), Vec2::new(ic.x, ic.bottom()), 5.0, c);
+                        if xit.clicked {
+                            actions.mutations.push(Mutation::DeletePlaylist(pid));
+                            if current {
+                                self.set_view(View::Collection);
+                            }
+                        }
+                    }
+                }
+                SideItem::NewPlaylist => {
+                    let id = f.id();
+                    let it = f.interact(id, row);
+                    if it.hovered {
+                        f.p.fill_rrect(row, 5.0, Color::rgba(1.0, 1.0, 1.0, 0.05));
+                    }
+                    f.text_left(Rect::new(row.x + 30.0, row.y, row.w - 30.0, row.h), "+  NEW PLAYLIST", th.text, if it.hovered { th.fg } else { th.fg_dim });
+                    if it.clicked {
+                        let name = format!("PLAYLIST {}", lib.playlists.len() + 1);
+                        let pid = PlaylistId::new(&name);
+                        actions.mutations.push(Mutation::CreatePlaylist { id: pid, name: name.clone() });
+                        self.set_view(View::Playlist(pid));
+                        self.rename = Some((pid, name, true));
+                    }
+                }
+                SideItem::Tags => f.text_left(row.inset_xy(10.0, 0.0), "TAGS", th.text, th.fg_dim),
+                SideItem::History => f.text_left(row.inset_xy(10.0, 0.0), "HISTORY", th.text, th.fg_dim),
+            }
+            f.pop_scope();
+        }
+        f.pop_clip();
+        f.pop_scope();
+        zones
     }
 }

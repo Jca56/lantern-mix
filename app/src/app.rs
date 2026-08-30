@@ -185,8 +185,8 @@ impl App {
                 self.loader.load(deck, t.path.clone());
             }
         }
-        if let Some((id, before)) = browser_actions.reorder {
-            self.db.apply(lmx_library::Mutation::Move { id, before });
+        for m in browser_actions.mutations {
+            self.db.apply(m);
         }
         if !browser_actions.add_roots.is_empty() {
             for r in browser_actions.add_roots {

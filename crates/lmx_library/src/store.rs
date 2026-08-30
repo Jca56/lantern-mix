@@ -6,7 +6,7 @@
 //! automatically every `SNAPSHOT_EVERY` journal entries.
 
 use crate::format::{self, Entries, Writer};
-use crate::model::Library;
+use crate::model::{Library, Playlist, PlaylistId, TrackId};
 use crate::mutation::{decode_track, encode_track, Mutation};
 use std::fs::{File, OpenOptions};
 use std::io::{self, BufWriter, Write};
@@ -21,6 +21,13 @@ mod lt {
     pub const ROOT: u16 = 1;
     pub const TRACK: u16 = 2;
     pub const ORDER: u16 = 3;
+    pub const PLAYLIST: u16 = 4;
+}
+
+mod pt {
+    pub const ID: u16 = 1;
+    pub const NAME: u16 = 2;
+    pub const TRACK: u16 = 3;
 }
 
 pub struct Store {
@@ -39,6 +46,15 @@ fn encode_library(lib: &Library) -> Vec<u8> {
     }
     for id in &lib.order {
         w.u64(lt::ORDER, id.0);
+    }
+    for p in &lib.playlists {
+        let mut pw = Writer::new();
+        pw.u64(pt::ID, p.id.0);
+        pw.str(pt::NAME, &p.name);
+        for t in &p.tracks {
+            pw.u64(pt::TRACK, t.0);
+        }
+        w.blob(lt::PLAYLIST, pw);
     }
     w.finish()
 }
@@ -59,7 +75,25 @@ fn decode_library(body: &[u8]) -> Library {
             }
             lt::ORDER => {
                 if let Some(v) = e.u64() {
-                    lib.order.push(crate::model::TrackId(v));
+                    lib.order.push(TrackId(v));
+                }
+            }
+            lt::PLAYLIST => {
+                let mut p = Playlist::default();
+                for f in e.entries() {
+                    match f.tag {
+                        pt::ID => p.id = PlaylistId(f.u64().unwrap_or(0)),
+                        pt::NAME => p.name = f.str().unwrap_or("").to_string(),
+                        pt::TRACK => {
+                            if let Some(v) = f.u64() {
+                                p.tracks.push(TrackId(v));
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                if p.id != PlaylistId(0) {
+                    lib.playlists.push(p);
                 }
             }
             _ => {}
@@ -159,6 +193,8 @@ mod tests {
             st.apply(&mut lib, Mutation::Upsert(track(2))).unwrap();
             st.apply(&mut lib, Mutation::SetGrid { id: TrackId(1), grid: Grid { bpm: 140.0, anchor_frame: 3.0, locked: true } }).unwrap();
             st.apply(&mut lib, Mutation::Move { id: TrackId(2), before: Some(TrackId(1)) }).unwrap();
+            st.apply(&mut lib, Mutation::CreatePlaylist { id: PlaylistId(5), name: "Set".into() }).unwrap();
+            st.apply(&mut lib, Mutation::PlaylistPlace { id: PlaylistId(5), track: TrackId(1), before: None }).unwrap();
             // no snapshot: everything lives in the journal
         }
         {
@@ -176,6 +212,8 @@ mod tests {
             assert_eq!(lib.len(), 1);
             assert_eq!(lib.get(TrackId(1)).unwrap().title, "T1");
             assert_eq!(lib.order, vec![TrackId(1)]);
+            let p = lib.playlist(PlaylistId(5)).unwrap();
+            assert_eq!((p.name.as_str(), p.tracks.clone()), ("Set", vec![TrackId(1)]));
         }
         std::fs::remove_dir_all(&dir).ok();
     }
