@@ -105,6 +105,11 @@ impl App {
                         frames: probe.duration_frames,
                         bpm_tag: meta.bpm_tag,
                         key_tag: meta.key_tag.clone(),
+                        bpm: meta.bpm_tag.filter(|b| *b >= 20.0 && *b <= 400.0).unwrap_or(crate::screens::DEFAULT_BPM),
+                        anchor_frame: 0.0,
+                        scrub: None,
+                        bpm_edit: None,
+                        bpm_focus: false,
                     };
                     eprintln!(
                         "lantern-mix: deck {} ← {} ({} Hz, {:.1} s, {} columns)",

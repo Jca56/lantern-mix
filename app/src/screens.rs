@@ -12,7 +12,8 @@ use lmx_analysis::FINE_FRAMES;
 use lmx_audio::AudioState;
 use lmx_engine::Snapshot;
 use lmx_gpu::WaveId;
-use lmx_ui::waveform::StripView;
+use lmx_engine::EngineCommand;
+use lmx_ui::waveform::{GridView, StripView};
 use lmx_ui::{Rect, UiFrame, Vec2};
 use std::path::PathBuf;
 
@@ -30,6 +31,14 @@ pub struct DeckView {
     pub frames: u64,
     pub bpm_tag: Option<f32>,
     pub key_tag: Option<String>,
+    /// Grid: tempo and the source frame of bar 1 beat 1. Per deck for now.
+    pub bpm: f32,
+    pub anchor_frame: f64,
+    /// Position while the strip is being scrubbed (instant feedback).
+    pub scrub: Option<f64>,
+    /// BPM readout being edited: the text so far.
+    pub bpm_edit: Option<String>,
+    pub bpm_focus: bool,
 }
 
 pub struct PerformanceScreen {
@@ -74,6 +83,7 @@ impl Default for PerformanceScreen {
 }
 
 const DECK_NAMES: [&str; 4] = ["DECK 1", "DECK 2", "DECK 3", "DECK 4"];
+pub const DEFAULT_BPM: f32 = 140.0;
 
 fn fmt_time(secs: f64) -> String {
     let neg = secs < 0.0;
@@ -139,7 +149,7 @@ impl PerformanceScreen {
         let strip_h = ((waves.h - 3.0 * 5.0) / 4.0).floor();
         for (slot, deck) in settings.wave_order.decks().into_iter().enumerate() {
             let strip = Rect::new(waves.x, waves.y + slot as f32 * (strip_h + 5.0), waves.w, strip_h);
-            self.strip(f, deck, strip, snap, loader);
+            self.strip(f, deck, strip, snap, loader, audio);
             self.drop_zones.push((deck, strip));
         }
 
@@ -171,28 +181,61 @@ impl PerformanceScreen {
         actions
     }
 
-    fn strip(&mut self, f: &mut UiFrame, i: usize, rect: Rect, snap: &Snapshot, loader: &Loader) {
+    fn strip(&mut self, f: &mut UiFrame, i: usize, rect: Rect, snap: &Snapshot, loader: &Loader, audio: &mut Audio) {
         let dv = &self.decks[i];
         let ds = snap.decks[i];
+        let sr = dv.sample_rate.max(1) as f32;
         let cols_per_px = if dv.sample_rate > 0 {
-            (STRIP_SECONDS * dv.sample_rate as f32 / FINE_FRAMES as f32) / (rect.w - 10.0).max(1.0)
+            (STRIP_SECONDS * sr / FINE_FRAMES as f32) / (rect.w - 10.0).max(1.0)
         } else {
             1.0
+        };
+        let pos = dv.scrub.unwrap_or(ds.pos);
+        let grid = if ds.loaded && dv.bpm > 0.0 {
+            Some(GridView {
+                beat_cols: sr * 60.0 / dv.bpm / FINE_FRAMES as f32,
+                anchor_col: (dv.anchor_frame / FINE_FRAMES as f64) as f32,
+            })
+        } else {
+            None
         };
         let view = StripView {
             wave: if ds.loaded { dv.wave } else { None },
             columns: dv.columns,
-            playhead_col: (ds.pos / FINE_FRAMES as f64) as f32,
+            playhead_col: (pos / FINE_FRAMES as f64) as f32,
             cols_per_px,
             deck: i,
             playing: ds.playing,
+            grid,
         };
         let label = match loader.progress(i) {
             Some(p) => format!("{}  LOADING {:.0}%", DECK_NAMES[i], p * 100.0),
             None if dv.title.is_empty() => DECK_NAMES[i].to_string(),
             None => format!("{}  {}", DECK_NAMES[i], dv.title),
         };
-        f.waveform_strip(rect, &view, &label);
+        f.push_scope(10 + i as u64);
+        let it = f.waveform_strip(rect, &view, &label);
+        f.pop_scope();
+        if !ds.loaded {
+            return;
+        }
+        let dv = &mut self.decks[i];
+        let frames_moved = it.drag_cols as f64 * FINE_FRAMES as f64;
+        if it.held {
+            if it.shift {
+                // slide the grid with the pointer
+                dv.anchor_frame += frames_moved;
+            } else if frames_moved != 0.0 || dv.scrub.is_none() {
+                // scrub: the waveform follows the pointer, so the head moves the other way
+                let cur = dv.scrub.unwrap_or(ds.pos);
+                let next = (cur - frames_moved).clamp(0.0, ds.frames.saturating_sub(1) as f64);
+                dv.scrub = Some(next);
+                audio.send(EngineCommand::Seek { deck: i, frame: next });
+            }
+        }
+        if it.released {
+            dv.scrub = None;
+        }
     }
 
     fn deck(&mut self, f: &mut UiFrame, i: usize, rect: Rect, snap: &Snapshot, audio: &mut Audio, loader: &Loader) {
@@ -221,8 +264,42 @@ impl PerformanceScreen {
         r.cut_top(5.0);
         let mut row = r.cut_top(60.0);
         let bpm = row.cut_left((row.w * 0.36).max(180.0).min(260.0));
-        let bpm_s = dv.bpm_tag.map(|b| format!("{b:.2}")).unwrap_or_else(|| "---.--".into());
-        f.readout(bpm, &bpm_s, "BPM", if dv.bpm_tag.is_some() { th.fg } else { th.fg_dim });
+        let loaded = ds.loaded;
+        {
+            let dv = &mut self.decks[i];
+            if let Some(text) = dv.bpm_edit.as_mut() {
+                f.push_scope(7);
+                f.text_field(bpm, text, &mut dv.bpm_focus);
+                f.pop_scope();
+                if !dv.bpm_focus {
+                    if let Ok(v) = text.trim().parse::<f32>() {
+                        if (20.0..=400.0).contains(&v) {
+                            dv.bpm = v;
+                        }
+                    }
+                    dv.bpm_edit = None;
+                }
+            } else {
+                f.push_scope(8);
+                let id = f.id();
+                let it = f.interact(id, bpm);
+                f.pop_scope();
+                let bpm_s = if loaded { format!("{:.2}", dv.bpm) } else { "---.--".into() };
+                f.readout(bpm, &bpm_s, "BPM", if loaded { th.fg } else { th.fg_dim });
+                if loaded {
+                    if it.clicked {
+                        dv.bpm_edit = Some(format!("{:.2}", dv.bpm));
+                        dv.bpm_focus = true;
+                    }
+                    if it.hovered && f.input.wheel.y != 0.0 {
+                        let step = if f.input.shift { 1.0 } else { 0.1 };
+                        dv.bpm = (dv.bpm + (f.input.wheel.y / 40.0) * step).clamp(20.0, 400.0);
+                        dv.bpm = (dv.bpm * 100.0).round() / 100.0;
+                    }
+                }
+            }
+        }
+        let dv = &self.decks[i];
         let key = row.cut_left((row.w * 0.3).max(120.0).min(160.0));
         let key_s = dv.key_tag.clone().unwrap_or_else(|| "--".into());
         f.readout(key, &key_s, "KEY", if dv.key_tag.is_some() { th.fg } else { th.fg_dim });
