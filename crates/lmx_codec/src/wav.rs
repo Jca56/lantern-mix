@@ -290,13 +290,13 @@ mod tests {
         let mut data = Vec::new();
         for s in samples {
             match kind {
-                "8" => data.push(((s * 127.0).round() + 128.0) as u8),
-                "16" => data.extend_from_slice(&((s * 32767.0).round() as i16).to_le_bytes()),
+                "8" => data.push(((s * 128.0).round().clamp(-128.0, 127.0) + 128.0) as u8),
+                "16" => data.extend_from_slice(&((s * 32768.0).round().clamp(-32768.0, 32767.0) as i16).to_le_bytes()),
                 "24" | "ext24" => {
-                    let v = (s * 8_388_607.0).round() as i32;
+                    let v = (s * 8_388_608.0).round().clamp(-8_388_608.0, 8_388_607.0) as i32;
                     data.extend_from_slice(&v.to_le_bytes()[..3]);
                 }
-                "32" => data.extend_from_slice(&((*s as f64 * 2_147_483_647.0).round() as i32).to_le_bytes()),
+                "32" => data.extend_from_slice(&((*s as f64 * 2_147_483_648.0).round().clamp(-2_147_483_648.0, 2_147_483_647.0) as i32).to_le_bytes()),
                 "32f" => data.extend_from_slice(&s.to_le_bytes()),
                 "64f" => data.extend_from_slice(&(*s as f64).to_le_bytes()),
                 _ => unreachable!(),
@@ -333,7 +333,7 @@ mod tests {
     #[test]
     fn roundtrip_every_sample_format() {
         let src = ramp(200); // 100 stereo frames
-        for (kind, tol) in [("8", 1.0 / 100.0), ("16", 1.0 / 30000.0), ("24", 1e-6), ("ext24", 1e-6), ("32", 1e-7), ("32f", 0.0), ("64f", 1e-7)] {
+        for (kind, tol) in [("8", 1.0 / 200.0), ("16", 1.0 / 32768.0), ("24", 1e-6), ("ext24", 1e-6), ("32", 1e-7), ("32f", 0.0), ("64f", 1e-7)] {
             let p = tmp(kind, &make_wav(2, 44_100, kind, &src, &[]));
             let (audio, _) = decode_all(&p, |_| {}).unwrap();
             assert_eq!(audio.sample_rate, 44_100);
