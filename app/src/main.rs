@@ -6,6 +6,7 @@
 pub mod app;
 pub mod screens;
 pub mod settings;
+pub mod titlebar;
 pub mod wiring;
 pub mod workers;
 

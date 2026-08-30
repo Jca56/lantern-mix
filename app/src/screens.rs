@@ -45,10 +45,10 @@ impl Default for DemoScreen {
 }
 
 impl DemoScreen {
-    pub fn draw(&mut self, f: &mut UiFrame, audio: &mut Audio) {
+    pub fn draw(&mut self, f: &mut UiFrame, audio: &mut Audio, area: Rect) {
         let th = f.theme().clone();
         let gap = th.gap;
-        let mut r = Rect::new(0.0, 0.0, f.size.x, f.size.y).inset(10.0);
+        let mut r = area.inset(10.0);
 
         // real levels from the RT thread; the tone plays on the first pair
         let lv = audio.levels();

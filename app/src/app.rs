@@ -14,7 +14,10 @@ use winit::keyboard::{Key, NamedKey};
 use winit::window::{Window, WindowId};
 
 use crate::screens::DemoScreen;
+use crate::titlebar::{self, TitleAction, TitleBar};
 use crate::wiring::Audio;
+use lmx_ui::Rect;
+use winit::window::CursorIcon;
 
 struct Gfx {
     gpu: Gpu,
@@ -29,6 +32,9 @@ pub struct App {
     ui: Ui,
     screen: DemoScreen,
     audio: Audio,
+    titlebar: TitleBar,
+    cursor: CursorIcon,
+    quit: bool,
     last_frame: Instant,
 }
 
@@ -41,6 +47,9 @@ impl App {
             ui: Ui::new(Theme::default()),
             screen: DemoScreen::default(),
             audio: Audio::start(),
+            titlebar: TitleBar::default(),
+            cursor: CursorIcon::Default,
+            quit: false,
             last_frame: Instant::now(),
         }
     }
@@ -79,11 +88,32 @@ impl App {
         };
         gfx.painter.begin(scale, (w, h));
         gfx.text.begin(scale, w, h);
-        {
+        let maximized = window.is_maximized();
+        let (action, cursor) = {
             let mut f = self.ui.frame(&mut gfx.painter, &mut gfx.text, &self.input, dt);
-            self.screen.draw(&mut f, &mut self.audio);
-        }
+            let (action, cursor) = self.titlebar.draw(&mut f, maximized);
+            let area = Rect::new(0.0, titlebar::HEIGHT, f.size.x, f.size.y - titlebar::HEIGHT);
+            self.screen.draw(&mut f, &mut self.audio, area);
+            (action, cursor)
+        };
         self.input.begin_frame();
+        if cursor != self.cursor {
+            self.cursor = cursor;
+            window.set_cursor(cursor);
+        }
+        let window = window.clone();
+        match action {
+            TitleAction::None => {}
+            TitleAction::Minimize => window.set_minimized(true),
+            TitleAction::ToggleMaximize => window.set_maximized(!maximized),
+            TitleAction::Close => self.quit = true,
+            TitleAction::Drag => {
+                let _ = window.drag_window();
+            }
+            TitleAction::Resize(dir) => {
+                let _ = window.drag_resize_window(dir);
+            }
+        }
         let bg = self.ui.theme.bg;
         gfx.painter.render(&gfx.gpu.device, &gfx.gpu.queue, &mut frame.encoder, &frame.view, Some(bg));
         gfx.text.render(&mut frame.encoder, &frame.view);
@@ -102,6 +132,7 @@ impl ApplicationHandler for App {
         }
         let attrs = Window::default_attributes()
             .with_title("Lantern Mix")
+            .with_decorations(false)
             .with_inner_size(LogicalSize::new(1600.0, 1000.0));
         let window = Arc::new(event_loop.create_window(attrs).expect("create window"));
         let size = window.inner_size();
@@ -174,7 +205,12 @@ impl ApplicationHandler for App {
                 }
                 self.redraw();
             }
-            WindowEvent::RedrawRequested => self.draw(),
+            WindowEvent::RedrawRequested => {
+                self.draw();
+                if self.quit {
+                    event_loop.exit();
+                }
+            }
             _ => {}
         }
     }
