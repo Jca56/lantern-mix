@@ -94,7 +94,7 @@ impl Browser {
         }
 
         // ── sidebar: search on top, tree below ──
-        let mut side = r.cut_left(300.0);
+        let side = r.cut_left(300.0);
         r.cut_left(th.gap);
         f.p.fill_rrect(side, 5.0, th.well_deep);
         f.p.fill_rect(Rect::new(side.right() - 5.0, side.y, 5.0, side.h), th.border);
