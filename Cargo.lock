@@ -979,6 +979,7 @@ name = "lmx_gpu"
 version = "0.1.0"
 dependencies = [
  "lmx_core",
+ "lntrn-draw",
  "lntrn-text",
  "wgpu",
 ]

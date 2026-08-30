@@ -1,14 +1,17 @@
-//! Lantern Mix — the application: winit loop, repaint-on-demand policy, screens, wiring between audio, MIDI, library, workers and UI.
+//! Lantern Mix — the application: winit loop, repaint-on-demand policy, screens,
+//! wiring between audio, MIDI, library, workers and UI.
 //!
-//! Design: see `docs/` — this crate is a skeleton; responsibilities and module
-//! boundaries are decided, logic is not written yet.
+//! Design: `docs/01-ARCHITECTURE.md`, `docs/05-UI.md`.
 
 pub mod app;
 pub mod screens;
-pub mod workers;
-pub mod wiring;
 pub mod settings;
+pub mod wiring;
+pub mod workers;
 
 fn main() {
-    println!("lantern-mix — design phase. See docs/.");
+    if let Err(e) = app::App::run() {
+        eprintln!("lantern-mix: {e}");
+        std::process::exit(1);
+    }
 }

@@ -12,3 +12,4 @@ description = "wgpu 28 painter: surface/device, SDF shape pipeline, textures, wa
 lmx_core = { workspace = true }
 wgpu = { workspace = true }
 lntrn-text = { workspace = true }
+lntrn-draw = { workspace = true }
