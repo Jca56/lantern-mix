@@ -48,6 +48,7 @@ pub struct Theme {
     pub grip: Color,
     pub meter_ok: Color,
     pub meter_hot: Color,
+    pub scrollbar: Color,
     pub deck: [Color; 4],
 }
 
@@ -86,6 +87,7 @@ impl Default for Theme {
             grip: Color::hex(0xEDEDED),
             meter_ok: Color::hex(0x64D23C),
             meter_hot: Color::hex(0xFF3B30),
+            scrollbar: Color::hex(0xE6B422),
             deck: [Color::hex(0xFF2E2E), Color::hex(0x2EDD4A), Color::hex(0x2E7BFF), Color::hex(0xB04DFF)],
         }
     }

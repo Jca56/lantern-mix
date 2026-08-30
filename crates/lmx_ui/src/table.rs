@@ -83,7 +83,7 @@ impl UiFrame<'_> {
             *scroll = scroll.clamp(0.0, max_scroll);
             let thumb_top = track.y + (*scroll / max_scroll.max(1e-3)) * (track.h - thumb_h);
             self.p.fill_rrect(track, 5.0, th.well_deep);
-            let tc = if it.hovered || it.held { th.grip } else { th.border_hot };
+            let tc = if it.hovered || it.held { th.scrollbar.lighten(0.25) } else { th.scrollbar };
             self.p.fill_rrect(Rect::new(track.x, thumb_top, track.w, thumb_h), 5.0, tc);
         } else {
             *scroll = 0.0;

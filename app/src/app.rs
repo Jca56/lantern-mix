@@ -176,6 +176,7 @@ impl App {
             let mut f = self.ui.frame(&mut gfx.painter, &mut gfx.text, &self.input, dt);
             let (action, cursor, bar_free) = self.titlebar.draw(&mut f, maximized, &self.settings);
             let area = Rect::new(0.0, titlebar::HEIGHT, f.size.x, f.size.y - titlebar::HEIGHT);
+            self.screen.browser.columns = self.settings.columns;
             let ba = self.screen.draw(&mut f, &mut self.audio, &self.loader, &mut self.db, &self.settings, &snap, area, bar_free);
             (action, cursor, ba)
         };
@@ -187,6 +188,11 @@ impl App {
         }
         for m in browser_actions.mutations {
             self.db.apply(m);
+        }
+        if self.screen.browser.columns_changed {
+            self.screen.browser.columns_changed = false;
+            self.settings.columns = self.screen.browser.columns;
+            self.settings.save();
         }
         if !browser_actions.add_roots.is_empty() {
             for r in browser_actions.add_roots {
@@ -341,6 +347,9 @@ impl ApplicationHandler<UserEvent> for App {
                     };
                     if let Some(k) = named {
                         self.input.on_key(k);
+                        if k == UiKey::Space {
+                            self.input.on_text(" ");
+                        }
                     } else if let Some(t) = &event.text {
                         self.input.on_text(t);
                     }

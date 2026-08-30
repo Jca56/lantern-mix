@@ -38,17 +38,34 @@ impl WaveOrder {
     }
 }
 
+/// Browser column widths (logical px). TITLE and ARTIST share the flexible
+/// space by `title_frac`; the others are fixed.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Columns {
+    pub title_frac: f32,
+    pub bpm: f32,
+    pub key: f32,
+    pub time: f32,
+}
+
+impl Default for Columns {
+    fn default() -> Self {
+        Self { title_frac: 0.6, bpm: 120.0, key: 100.0, time: 120.0 }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Settings {
     pub wave_order: WaveOrder,
     /// Library folders, scanned at launch.
     pub roots: Vec<PathBuf>,
+    pub columns: Columns,
 }
 
 impl Default for Settings {
     fn default() -> Self {
         let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
-        Self { wave_order: WaveOrder::Deck3124, roots: vec![home.join("Music/DJ")] }
+        Self { wave_order: WaveOrder::Deck3124, roots: vec![home.join("Music/DJ")], columns: Columns::default() }
     }
 }
 
@@ -70,6 +87,12 @@ impl Settings {
                     }
                 }
                 "root" => roots.push(PathBuf::from(v.trim())),
+                "columns" => {
+                    let nums: Vec<f32> = v.split(',').filter_map(|x| x.trim().parse().ok()).collect();
+                    if nums.len() == 4 {
+                        s.columns = Columns { title_frac: nums[0].clamp(0.1, 0.9), bpm: nums[1].max(60.0), key: nums[2].max(60.0), time: nums[3].max(60.0) };
+                    }
+                }
                 _ => {}
             }
         }
@@ -85,6 +108,8 @@ impl Settings {
         for r in &self.roots {
             let _ = writeln!(out, "root = {}", r.display());
         }
+        let c = self.columns;
+        let _ = writeln!(out, "columns = {:.3},{:.0},{:.0},{:.0}", c.title_frac, c.bpm, c.key, c.time);
         let p = Self::path();
         if let Some(dir) = p.parent() {
             let _ = std::fs::create_dir_all(dir);

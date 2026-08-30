@@ -2,6 +2,7 @@
 //! track table with sortable headers, selection, keys 1–4 to load, row drag
 //! onto decks / playlists / other rows (manual order).
 
+use crate::settings::Columns;
 use crate::workers::Loader;
 use lmx_library::{search, Library, Mutation, PlaylistId, SortBy, TrackId};
 use lmx_ui::{Color, Key, Rect, UiFrame, Vec2};
@@ -10,7 +11,9 @@ use std::time::Instant;
 
 const ROW_H: f32 = 50.0;
 const DRAG_START_PX: f32 = 10.0;
-const SIDE_W: f32 = 300.0;
+const SIDE_W: f32 = 400.0;
+const COL_MIN: f32 = 60.0;
+const NUM_W: f32 = 70.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum View {
@@ -48,6 +51,11 @@ pub struct Browser {
     /// Playlist being renamed: (id, text, field focus).
     rename: Option<(PlaylistId, String, bool)>,
     last_click: Option<(PlaylistId, Instant)>,
+    pub columns: Columns,
+    /// A divider drag ended this frame: the app persists `columns`.
+    pub columns_changed: bool,
+    /// Divider being dragged (index) and the columns as they were at press.
+    col_drag: Option<(usize, Columns)>,
 }
 
 impl Default for Browser {
@@ -69,6 +77,9 @@ impl Default for Browser {
             drag: None,
             rename: None,
             last_click: None,
+            columns: Columns::default(),
+            columns_changed: false,
+            col_drag: None,
         }
     }
 }
@@ -139,8 +150,9 @@ impl Browser {
 
         // ── header: # (manual order) then the sortable columns ──
         let head = r.cut_top(35.0);
-        let widths = [70.0, 0.0, 0.0, 120.0, 100.0, 120.0];
+        let widths = self.column_widths(head.w - 20.0, th.gap);
         let cols = lmx_ui::layout::hstack(Rect::new(head.x, head.y, head.w - 20.0, head.h), &widths, th.gap);
+        self.column_dividers(f, &cols, head, th.gap);
         let names = ["#", "TITLE", "ARTIST", "BPM", "KEY", "TIME"];
         let sorts = [SortBy::Manual, SortBy::Title, SortBy::Artist, SortBy::Bpm, SortBy::Key, SortBy::Time];
         for (i, c) in cols.iter().enumerate() {
@@ -315,6 +327,62 @@ impl Browser {
             f.set_late_mode(false);
         }
         actions
+    }
+
+    /// Pixel widths for [#, TITLE, ARTIST, BPM, KEY, TIME] inside `total`.
+    fn column_widths(&self, total: f32, gap: f32) -> [f32; 6] {
+        let c = self.columns;
+        let fixed = NUM_W + c.bpm + c.key + c.time + gap * 5.0;
+        let flex = (total - fixed).max(2.0 * COL_MIN);
+        let title = (flex * c.title_frac).clamp(COL_MIN, flex - COL_MIN);
+        [NUM_W, title, flex - title, c.bpm, c.key, c.time]
+    }
+
+    /// Drag handles on the boundaries between headers: the divider moves and
+    /// the two neighbours trade width. TITLE/ARTIST share the flexible space.
+    fn column_dividers(&mut self, f: &mut UiFrame, cols: &[Rect], head: Rect, gap: f32) {
+        let th = f.theme().clone();
+        let total = head.w - 20.0;
+        let flex = (total - (NUM_W + self.columns.bpm + self.columns.key + self.columns.time + gap * 5.0)).max(2.0 * COL_MIN);
+        for d in 1..6 {
+            let x = cols[d - 1].right() + gap * 0.5;
+            let handle = Rect::new(x - 10.0, head.y, 20.0, head.h);
+            f.push_scope(500 + d as u64);
+            let id = f.id();
+            let it = f.interact(id, handle);
+            f.pop_scope();
+            if it.pressed {
+                self.col_drag = Some((d, self.columns));
+            }
+            if it.held {
+                if let Some((dd, start)) = self.col_drag {
+                    if dd == d {
+                        let dx = f.input.mouse.x - f.mem(id).drag_origin.x;
+                        let mut c = start;
+                        match d {
+                            1 => c.title_frac = (start.title_frac + dx / flex).clamp(COL_MIN / flex, 1.0 - COL_MIN / flex),
+                            2 => c.bpm = (start.bpm - dx).max(COL_MIN),
+                            3 => {
+                                c.bpm = (start.bpm + dx).max(COL_MIN);
+                                c.key = (start.key - (c.bpm - start.bpm)).max(COL_MIN);
+                            }
+                            4 => {
+                                c.key = (start.key + dx).max(COL_MIN);
+                                c.time = (start.time - (c.key - start.key)).max(COL_MIN);
+                            }
+                            _ => c.time = (start.time + dx).max(COL_MIN),
+                        }
+                        self.columns = c;
+                    }
+                }
+            }
+            if it.released {
+                self.col_drag = None;
+                self.columns_changed = true;
+            }
+            let c = if it.held { th.accent } else if it.hovered { th.border_hot } else { th.border };
+            f.p.fill_rect(Rect::new(x - 2.5, head.y + 5.0, 5.0, head.h - 10.0), c);
+        }
     }
 
     /// Search field + tree. Returns the playlist rows' rects (drop targets).
