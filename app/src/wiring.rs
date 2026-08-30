@@ -3,10 +3,12 @@
 //! `Audio` owns the PipeWire host with the engine as its render source, plus
 //! the UI-side handles: commands in, snapshot out, garbage back, tone controls.
 
+use crate::workers::UserEvent;
 use lmx_audio::{AudioConfig, AudioHost, AudioRender, AudioState};
 use lmx_core::TrackAudio;
 use lmx_engine::{Engine, EngineCommand, EngineHandles, Snapshot};
 use std::sync::atomic::Ordering;
+use winit::event_loop::EventLoopProxy;
 
 struct EngineRender(Engine);
 
@@ -30,8 +32,24 @@ pub struct Audio {
 impl Audio {
     /// Start PipeWire with the engine as the render source. Never fails the
     /// app: an error is kept for the UI to show.
-    pub fn start() -> Self {
-        let (engine, handles) = Engine::new();
+    pub fn start(proxy: EventLoopProxy<UserEvent>) -> Self {
+        // Engine state changes → eventfd → watcher thread → event loop wake.
+        let notify: Option<Box<dyn Fn() + Send>> = match lmx_rt::wake_pair() {
+            Some((n, w)) => {
+                std::thread::Builder::new()
+                    .name("lmx-wake".into())
+                    .spawn(move || loop {
+                        w.wait();
+                        if proxy.send_event(UserEvent::Wake).is_err() {
+                            break;
+                        }
+                    })
+                    .expect("spawn wake thread");
+                Some(Box::new(move || n.notify()))
+            }
+            None => None,
+        };
+        let (engine, handles) = Engine::new(notify);
         let mut config = AudioConfig::default();
         if let Ok(t) = std::env::var("LMX_AUDIO_TARGET") {
             config.target = Some(t);

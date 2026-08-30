@@ -48,14 +48,14 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(startup_paths: Vec<PathBuf>) -> Self {
+    pub fn new(startup_paths: Vec<PathBuf>, proxy: winit::event_loop::EventLoopProxy<UserEvent>) -> Self {
         Self {
             window: None,
             gfx: None,
             input: Input::default(),
             ui: Ui::new(Theme::default()),
             screen: PerformanceScreen::default(),
-            audio: Audio::start(),
+            audio: Audio::start(proxy),
             loader: Loader::new(),
             startup_paths,
             titlebar: TitleBar::default(),
@@ -70,7 +70,7 @@ impl App {
         let event_loop = EventLoop::<UserEvent>::with_user_event().build().map_err(|e| e.to_string())?;
         // Sleep between events; redraws are requested explicitly.
         event_loop.set_control_flow(ControlFlow::Wait);
-        let mut app = App::new(paths);
+        let mut app = App::new(paths, event_loop.create_proxy());
         app.loader.set_proxy(event_loop.create_proxy());
         event_loop.run_app(&mut app).map_err(|e| e.to_string())
     }

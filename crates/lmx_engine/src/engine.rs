@@ -40,10 +40,14 @@ pub struct Engine {
     tone: Arc<ToneParams>,
     tone_phase: f32,
     tone_gain: f32,
+    /// Called (from the RT thread) when a deck's loaded/playing state changes,
+    /// so a sleeping UI wakes up. Must itself be RT-safe.
+    notify: Option<Box<dyn Fn() + Send>>,
+    last_state: [(bool, bool); DECKS],
 }
 
 impl Engine {
-    pub fn new() -> (Engine, EngineHandles) {
+    pub fn new(notify: Option<Box<dyn Fn() + Send>>) -> (Engine, EngineHandles) {
         let (cmd_tx, cmd_rx) = spsc(256);
         let (gb_tx, gb_rx) = spsc(16);
         let (snap_w, snap_r) = triple(Snapshot::default());
@@ -60,6 +64,8 @@ impl Engine {
             tone: tone.clone(),
             tone_phase: 0.0,
             tone_gain: 0.0,
+            notify,
+            last_state: [(false, false); DECKS],
         };
         (engine, EngineHandles { cmds: cmd_tx, garbage: gb_rx, snapshot: snap_r, tone })
     }
@@ -157,10 +163,21 @@ impl Engine {
         self.mix = mix_buf;
         self.blocks += 1;
         let mut snap = Snapshot { master_peak, blocks: self.blocks, ..Default::default() };
+        let mut changed = false;
         for (i, d) in self.decks.iter().enumerate() {
             snap.decks[i] = d.snap();
+            let st = (snap.decks[i].loaded, snap.decks[i].playing);
+            if st != self.last_state[i] {
+                self.last_state[i] = st;
+                changed = true;
+            }
         }
         self.snap.write(snap);
+        if changed {
+            if let Some(n) = &self.notify {
+                n();
+            }
+        }
     }
 
     fn add_tone(&mut self, mix: &mut [f32], frames: usize, rate: u32) {
@@ -200,7 +217,7 @@ mod tests {
 
     #[test]
     fn plays_sample_exact_at_unity_and_returns_old_track() {
-        let (mut e, mut h) = Engine::new();
+        let (mut e, mut h) = Engine::new(None);
         h.cmds.push(EngineCommand::Load { deck: 0, audio: ramp_track(1000, 48_000) }).ok().unwrap();
         h.cmds.push(EngineCommand::Play { deck: 0, on: true }).ok().unwrap();
         let mut out = vec![0.0f32; 128 * 2];
@@ -222,7 +239,7 @@ mod tests {
 
     #[test]
     fn resamples_by_rate_ratio_and_stops_at_end() {
-        let (mut e, mut h) = Engine::new();
+        let (mut e, mut h) = Engine::new(None);
         h.cmds.push(EngineCommand::Load { deck: 1, audio: ramp_track(441, 44_100) }).ok().unwrap();
         h.cmds.push(EngineCommand::Play { deck: 1, on: true }).ok().unwrap();
         let mut out = vec![0.0f32; 480 * 4];

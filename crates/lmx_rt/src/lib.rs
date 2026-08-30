@@ -9,7 +9,9 @@ pub mod rtbox;
 pub mod rtvec;
 pub mod spsc;
 pub mod triple;
+pub mod wake;
 
 pub use atomic::{AtomicF32, AtomicF64};
 pub use spsc::{spsc, Consumer, Producer};
 pub use triple::{triple, TripleReader, TripleWriter};
+pub use wake::{wake_pair, WakeNotifier, WakeWaiter};
