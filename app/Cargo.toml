@@ -1,0 +1,23 @@
+[package]
+name = "lantern-mix"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Lantern Mix — the application: winit loop, repaint-on-demand policy, screens, wiring between audio, MIDI, library, workers and UI."
+
+[dependencies]
+lmx_core = { workspace = true }
+lmx_rt = { workspace = true }
+lmx_dsp = { workspace = true }
+lmx_codec = { workspace = true }
+lmx_analysis = { workspace = true }
+lmx_library = { workspace = true }
+lmx_engine = { workspace = true }
+lmx_audio = { workspace = true }
+lmx_midi = { workspace = true }
+lmx_gpu = { workspace = true }
+lmx_ui = { workspace = true }
+winit = { workspace = true }

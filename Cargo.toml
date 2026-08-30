@@ -1,0 +1,60 @@
+# Lantern Mix workspace. Versions are pinned here, once; crates use `workspace = true`.
+# See docs/01-ARCHITECTURE.md for the crate map and docs/DECISIONS.md (D3) for the
+# exhaustive list of sanctioned external dependencies.
+[workspace]
+resolver = "2"
+members = [
+    "crates/lmx_core",
+    "crates/lmx_rt",
+    "crates/lmx_dsp",
+    "crates/lmx_codec",
+    "crates/lmx_analysis",
+    "crates/lmx_library",
+    "crates/lmx_engine",
+    "crates/lmx_audio",
+    "crates/lmx_midi",
+    "crates/lmx_gpu",
+    "crates/lmx_ui",
+    "app",
+    "tools/lmx_midisniff",
+    "tools/lmx_analyze",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+authors = ["Alva"]
+license = "GPL-3.0-or-later"
+publish = false
+
+[workspace.dependencies]
+# internal
+lmx_core     = { path = "crates/lmx_core" }
+lmx_rt       = { path = "crates/lmx_rt" }
+lmx_dsp      = { path = "crates/lmx_dsp" }
+lmx_codec    = { path = "crates/lmx_codec" }
+lmx_analysis = { path = "crates/lmx_analysis" }
+lmx_library  = { path = "crates/lmx_library" }
+lmx_engine   = { path = "crates/lmx_engine" }
+lmx_audio    = { path = "crates/lmx_audio" }
+lmx_midi     = { path = "crates/lmx_midi" }
+lmx_gpu      = { path = "crates/lmx_gpu" }
+lmx_ui       = { path = "crates/lmx_ui" }
+# sanctioned external (DECISIONS D3) — pinned
+wgpu       = "28.0"
+winit      = "0.30"
+pipewire   = "0.10"
+# ours, next door — never modified from this repo (pins wgpu at 28)
+lntrn-text = { path = "../Lantern-DE/lntrn-text" }
+
+[profile.dev]
+opt-level = 1
+[profile.dev.package."*"]
+opt-level = 2          # wgpu/pipewire in debug builds are painful otherwise
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 4
+debug = 1              # keep line tables: profiling the RT path matters

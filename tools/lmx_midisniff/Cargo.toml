@@ -1,0 +1,12 @@
+[package]
+name = "lmx_midisniff"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Dump raw MIDI from a /dev/snd device with timestamps; pair 14-bit CCs; --send for LED probing. Phase 0 tool for mapping the DDJ-GRV6."
+
+[dependencies]
+lmx_midi = { workspace = true }

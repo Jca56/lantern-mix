@@ -1,0 +1,13 @@
+[package]
+name = "lmx_analyze"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "CLI: analyze a file, print tempo candidates, grid, key, loudness; dump ODF/chroma as CSV. For tuning the detectors on real tracks."
+
+[dependencies]
+lmx_analysis = { workspace = true }
+lmx_codec = { workspace = true }

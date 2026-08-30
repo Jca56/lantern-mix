@@ -1,0 +1,13 @@
+[package]
+name = "lmx_ui"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Immediate-mode widget kit: ids, widget memory, input, layout, theme (big text), DJ widgets. Headless-testable; draws through lmx_gpu."
+
+[dependencies]
+lmx_core = { workspace = true }
+lmx_gpu = { workspace = true }

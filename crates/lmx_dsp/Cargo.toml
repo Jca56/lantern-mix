@@ -1,0 +1,11 @@
+[package]
+name = "lmx_dsp"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "DSP toolbox: FFT, biquads, SVF, YIN, smoothing, resampling, time-stretch, metering. Pure functions and small state structs, allocation-free after construction."
+
+[dependencies]

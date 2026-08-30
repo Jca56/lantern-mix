@@ -1,0 +1,11 @@
+[package]
+name = "lmx_rt"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Real-time-safe primitives: SPSC ring, triple buffer, atomic cells, deferred-drop boxes. The only pure crate allowed to use unsafe."
+
+[dependencies]

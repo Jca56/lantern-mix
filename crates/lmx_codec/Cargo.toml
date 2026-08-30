@@ -1,0 +1,12 @@
+[package]
+name = "lmx_codec"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Audio decoders (WAV, AIFF, FLAC; MP3 later) and tag readers. Never panics on malformed input, never writes files."
+
+[dependencies]
+lmx_core = { workspace = true }

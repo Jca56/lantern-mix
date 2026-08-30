@@ -1,0 +1,15 @@
+[package]
+name = "lmx_audio"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Audio host: PipeWire stream (official pipewire crate), device/profile discovery, rate negotiation; calls Engine::process from the RT thread."
+
+[dependencies]
+lmx_core = { workspace = true }
+lmx_rt = { workspace = true }
+lmx_engine = { workspace = true }
+pipewire = { workspace = true }
