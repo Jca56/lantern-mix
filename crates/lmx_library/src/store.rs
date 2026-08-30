@@ -20,6 +20,7 @@ const SNAPSHOT_EVERY: usize = 200;
 mod lt {
     pub const ROOT: u16 = 1;
     pub const TRACK: u16 = 2;
+    pub const ORDER: u16 = 3;
 }
 
 pub struct Store {
@@ -36,6 +37,9 @@ fn encode_library(lib: &Library) -> Vec<u8> {
     for t in &lib.tracks {
         w.blob(lt::TRACK, encode_track(t));
     }
+    for id in &lib.order {
+        w.u64(lt::ORDER, id.0);
+    }
     w.finish()
 }
 
@@ -51,6 +55,11 @@ fn decode_library(body: &[u8]) -> Library {
             lt::TRACK => {
                 if let Some(t) = decode_track(e) {
                     lib.tracks.push(t);
+                }
+            }
+            lt::ORDER => {
+                if let Some(v) = e.u64() {
+                    lib.order.push(crate::model::TrackId(v));
                 }
             }
             _ => {}
@@ -149,11 +158,13 @@ mod tests {
             st.apply(&mut lib, Mutation::Upsert(track(1))).unwrap();
             st.apply(&mut lib, Mutation::Upsert(track(2))).unwrap();
             st.apply(&mut lib, Mutation::SetGrid { id: TrackId(1), grid: Grid { bpm: 140.0, anchor_frame: 3.0, locked: true } }).unwrap();
+            st.apply(&mut lib, Mutation::Move { id: TrackId(2), before: Some(TrackId(1)) }).unwrap();
             // no snapshot: everything lives in the journal
         }
         {
             let (mut lib, mut st) = Store::open(&dir).unwrap();
             assert_eq!(lib.len(), 2);
+            assert_eq!(lib.order, vec![TrackId(2), TrackId(1)]);
             assert_eq!(lib.get(TrackId(1)).unwrap().grid.bpm, 140.0);
             assert_eq!(lib.roots, vec![PathBuf::from("/m")]);
             st.snapshot(&lib).unwrap();
@@ -164,6 +175,7 @@ mod tests {
             let (lib, _st) = Store::open(&dir).unwrap();
             assert_eq!(lib.len(), 1);
             assert_eq!(lib.get(TrackId(1)).unwrap().title, "T1");
+            assert_eq!(lib.order, vec![TrackId(1)]);
         }
         std::fs::remove_dir_all(&dir).ok();
     }

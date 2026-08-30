@@ -15,11 +15,14 @@ pub enum Mutation {
     SetMissing { id: TrackId, missing: bool },
     AddRoot(PathBuf),
     RemoveRoot(PathBuf),
+    /// Put `id` just before `before` in the manual order (`None` = last).
+    Move { id: TrackId, before: Option<TrackId> },
 }
 
 impl Mutation {
     pub fn apply(&self, lib: &mut Library) {
         match self {
+            Mutation::Move { id, before } => lib.move_before(*id, *before),
             Mutation::Upsert(t) => lib.upsert(t.clone()),
             Mutation::Remove(id) => {
                 lib.remove(*id);
@@ -150,6 +153,7 @@ mod mt {
     pub const FLAG: u16 = 7;
     pub const SIZE: u16 = 8;
     pub const MTIME: u16 = 9;
+    pub const BEFORE: u16 = 10;
 }
 
 impl Mutation {
@@ -191,6 +195,13 @@ impl Mutation {
                 w.u8(mt::KIND, 7);
                 w.str(mt::PATH, &p.to_string_lossy());
             }
+            Mutation::Move { id, before } => {
+                w.u8(mt::KIND, 8);
+                w.u64(mt::ID, id.0);
+                if let Some(b) = before {
+                    w.u64(mt::BEFORE, b.0);
+                }
+            }
         }
         w.finish()
     }
@@ -198,8 +209,10 @@ impl Mutation {
     pub fn decode(bytes: &[u8]) -> Option<Mutation> {
         let (mut kind, mut track, mut id, mut bpm, mut anchor, mut path, mut flag, mut size, mut mtime) =
             (0u8, None, TrackId(0), 0.0f32, 0.0f64, PathBuf::new(), false, 0u64, 0u64);
+        let mut before = None;
         for e in Entries::new(bytes) {
             match e.tag {
+                mt::BEFORE => before = Some(TrackId(e.u64()?)),
                 mt::KIND => kind = e.u8()?,
                 mt::TRACK => track = decode_track(e),
                 mt::ID => id = TrackId(e.u64()?),
@@ -220,6 +233,7 @@ impl Mutation {
             5 => Mutation::SetMissing { id, missing: flag },
             6 => Mutation::AddRoot(path),
             7 => Mutation::RemoveRoot(path),
+            8 => Mutation::Move { id, before },
             _ => return None,
         })
     }
@@ -257,6 +271,8 @@ mod tests {
             Mutation::SetMissing { id: TrackId(5), missing: true },
             Mutation::AddRoot("/music".into()),
             Mutation::RemoveRoot("/music".into()),
+            Mutation::Move { id: TrackId(6), before: Some(TrackId(1)) },
+            Mutation::Move { id: TrackId(6), before: None },
         ];
         for m in ms {
             assert_eq!(Mutation::decode(&m.encode()), Some(m));
@@ -275,5 +291,21 @@ mod tests {
         assert_eq!(lib.len(), 1);
         assert_eq!(lib.get(TrackId(1)).unwrap().grid.bpm, 100.0);
         assert_eq!(lib.roots, vec![PathBuf::from("/m")]);
+    }
+
+    #[test]
+    fn manual_order_moves() {
+        let mut lib = Library::default();
+        for n in 1..=4 {
+            Mutation::Upsert(sample_track(n)).apply(&mut lib);
+        }
+        assert_eq!(lib.order, vec![TrackId(1), TrackId(2), TrackId(3), TrackId(4)]);
+        Mutation::Move { id: TrackId(4), before: Some(TrackId(2)) }.apply(&mut lib);
+        assert_eq!(lib.order, vec![TrackId(1), TrackId(4), TrackId(2), TrackId(3)]);
+        Mutation::Move { id: TrackId(1), before: None }.apply(&mut lib);
+        assert_eq!(lib.order, vec![TrackId(4), TrackId(2), TrackId(3), TrackId(1)]);
+        Mutation::Remove(TrackId(2)).apply(&mut lib);
+        assert_eq!(lib.order, vec![TrackId(4), TrackId(3), TrackId(1)]);
+        assert_eq!(lib.positions()[&TrackId(1)], 2);
     }
 }

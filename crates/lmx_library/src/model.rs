@@ -93,6 +93,8 @@ impl Track {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SortBy {
+    /// The user's own order (drag to arrange).
+    Manual,
     Title,
     Artist,
     Bpm,
@@ -104,14 +106,41 @@ pub enum SortBy {
 pub struct Library {
     pub roots: Vec<PathBuf>,
     pub tracks: Vec<Track>,
+    /// Manual order of the collection; every track appears exactly once.
+    pub order: Vec<TrackId>,
     index: HashMap<TrackId, usize>,
     /// Bumps on every change; views cache against it.
     pub generation: u64,
 }
 
 impl Library {
+    /// Rebuild the id index and repair `order` (drop unknown ids, append
+    /// tracks that have none — e.g. from journals written before ordering).
     pub fn rebuild_index(&mut self) {
         self.index = self.tracks.iter().enumerate().map(|(i, t)| (t.id, i)).collect();
+        let mut seen = std::collections::HashSet::new();
+        self.order.retain(|id| self.index.contains_key(id) && seen.insert(*id));
+        for t in &self.tracks {
+            if !seen.contains(&t.id) {
+                self.order.push(t.id);
+            }
+        }
+        self.generation += 1;
+    }
+
+    /// Position of each track in the manual order.
+    pub fn positions(&self) -> HashMap<TrackId, usize> {
+        self.order.iter().enumerate().map(|(i, id)| (*id, i)).collect()
+    }
+
+    /// Move `id` so it sits just before `before` (or last when `None`).
+    pub fn move_before(&mut self, id: TrackId, before: Option<TrackId>) {
+        if Some(id) == before || !self.index.contains_key(&id) {
+            return;
+        }
+        self.order.retain(|x| *x != id);
+        let at = before.and_then(|b| self.order.iter().position(|x| *x == b)).unwrap_or(self.order.len());
+        self.order.insert(at, id);
         self.generation += 1;
     }
 
@@ -128,12 +157,13 @@ impl Library {
         self.tracks.iter().find(|t| t.path == p)
     }
 
-    /// Insert or replace by id.
+    /// Insert or replace by id. New tracks go to the end of the manual order.
     pub fn upsert(&mut self, t: Track) {
         match self.index.get(&t.id) {
             Some(i) => self.tracks[*i] = t,
             None => {
                 self.index.insert(t.id, self.tracks.len());
+                self.order.push(t.id);
                 self.tracks.push(t);
             }
         }
@@ -143,6 +173,7 @@ impl Library {
     pub fn remove(&mut self, id: TrackId) -> Option<Track> {
         let i = self.index.remove(&id)?;
         let t = self.tracks.remove(i);
+        self.order.retain(|x| *x != id);
         self.rebuild_index();
         Some(t)
     }

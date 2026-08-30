@@ -33,7 +33,7 @@ impl Default for Browser {
             scanning: false,
             query: String::new(),
             search_focus: false,
-            sort: SortBy::Title,
+            sort: SortBy::Manual,
             desc: false,
             view: Vec::new(),
             view_dirty: true,
@@ -52,6 +52,8 @@ pub struct BrowserActions {
     /// (deck, track) to load.
     pub load: Vec<(usize, TrackId)>,
     pub add_roots: Vec<PathBuf>,
+    /// Put a track before another (`None` = last) in the manual order.
+    pub reorder: Option<(TrackId, Option<TrackId>)>,
 }
 
 fn fmt_dur(secs: f64) -> String {
@@ -62,7 +64,7 @@ fn fmt_dur(secs: f64) -> String {
 impl Browser {
     fn refresh_view(&mut self, lib: &Library) {
         if self.view_dirty || self.view_gen != lib.generation {
-            self.view = search::view(&lib.tracks, &self.query, self.sort, self.desc);
+            self.view = search::view(lib, &self.query, self.sort, self.desc);
             self.view_dirty = false;
             self.view_gen = lib.generation;
         }
@@ -128,21 +130,21 @@ impl Browser {
             f.pop_clip();
         }
 
-        // ── header ──
+        // ── header: # (manual order) then the sortable columns ──
         let head = r.cut_top(35.0);
-        let widths = [0.0, 0.0, 120.0, 100.0, 120.0];
+        let widths = [70.0, 0.0, 0.0, 120.0, 100.0, 120.0];
         let cols = lmx_ui::layout::hstack(Rect::new(head.x, head.y, head.w - 20.0, head.h), &widths, th.gap);
-        let names = ["TITLE", "ARTIST", "BPM", "KEY", "TIME"];
-        let sorts = [SortBy::Title, SortBy::Artist, SortBy::Bpm, SortBy::Key, SortBy::Time];
+        let names = ["#", "TITLE", "ARTIST", "BPM", "KEY", "TIME"];
+        let sorts = [SortBy::Manual, SortBy::Title, SortBy::Artist, SortBy::Bpm, SortBy::Key, SortBy::Time];
         for (i, c) in cols.iter().enumerate() {
             f.push_scope(i as u64);
             let id = f.id();
             let it = f.interact(id, *c);
             let active = self.sort == sorts[i];
-            let label = if active { format!("{} {}", names[i], if self.desc { "▼" } else { "▲" }) } else { names[i].to_string() };
+            let label = if active && i > 0 { format!("{} {}", names[i], if self.desc { "▼" } else { "▲" }) } else { names[i].to_string() };
             f.text_left(*c, &label, th.text_small, if active || it.hovered { th.fg } else { th.fg_dim });
             if it.clicked {
-                if active {
+                if active && i > 0 {
                     self.desc = !self.desc;
                 } else {
                     self.sort = sorts[i];
@@ -191,9 +193,24 @@ impl Browser {
         }
 
         // ── rows ──
-        let rows = f.rows(r, ROW_H, self.view.len(), &mut self.scroll, keep);
-        f.push_clip(rows.area);
         let mouse = f.input.mouse;
+        // dragging near the top/bottom edge scrolls the list
+        if self.drag.is_some() && r.contains(mouse) {
+            if mouse.y < r.y + 40.0 {
+                self.scroll -= 8.0;
+            } else if mouse.y > r.bottom() - 40.0 {
+                self.scroll += 8.0;
+            }
+        }
+        let rows = f.rows(r, ROW_H, self.view.len(), &mut self.scroll, keep);
+        // where a dragged row would land: index of the row boundary nearest the pointer
+        let reorder_ok = self.sort == SortBy::Manual;
+        let insert_at = if self.drag.is_some() && reorder_ok && rows.area.contains(mouse) {
+            Some((((mouse.y - rows.area.y + self.scroll) / ROW_H).round().max(0.0) as usize).min(self.view.len()))
+        } else {
+            None
+        };
+        f.push_clip(rows.area);
         let mut clicked: Option<TrackId> = None;
         for i in rows.range.clone() {
             let t = &lib.tracks[self.view[i]];
@@ -223,25 +240,39 @@ impl Browser {
                 }
             }
             if it.released {
-                if let (Some(dragged), Some(deck)) = (self.drag, drop_target(mouse)) {
-                    actions.load.push((deck, dragged));
+                if let Some(dragged) = self.drag {
+                    if let Some(at) = insert_at {
+                        let before = self.view.get(at).map(|&vi| lib.tracks[vi].id);
+                        if before != Some(dragged) {
+                            actions.reorder = Some((dragged, before));
+                        }
+                    } else if let Some(deck) = drop_target(mouse) {
+                        actions.load.push((deck, dragged));
+                    }
                 }
                 self.drag = None;
                 self.press = None;
             }
             let cells = lmx_ui::layout::hstack(Rect::new(row.x, row.y, row.w, row.h), &widths, th.gap);
             let fg = if t.missing { th.warn } else { th.fg };
-            f.push_clip(cells[0]);
-            f.text_left(cells[0].inset_xy(5.0, 0.0), t.display_title(), th.text, fg);
-            f.pop_clip();
+            f.text_right(cells[0].inset_xy(10.0, 0.0), &format!("{}", i + 1), th.text_small, th.fg_dim);
             f.push_clip(cells[1]);
-            f.text_left(cells[1], &t.artist, th.text, th.fg_dim);
+            f.text_left(cells[1].inset_xy(5.0, 0.0), t.display_title(), th.text, fg);
+            f.pop_clip();
+            f.push_clip(cells[2]);
+            f.text_left(cells[2], &t.artist, th.text, th.fg_dim);
             f.pop_clip();
             let bpm = t.bpm().map(|b| format!("{b:.1}")).unwrap_or_else(|| "—".into());
-            f.text_left(cells[2], &bpm, th.text, if t.grid.bpm > 0.0 { th.fg } else { th.fg_dim });
+            f.text_left(cells[3], &bpm, th.text, if t.grid.bpm > 0.0 { th.fg } else { th.fg_dim });
             let key = t.key_tag.clone().unwrap_or_else(|| "—".into());
-            f.text_left(cells[3], &key, th.text, th.fg_dim);
-            f.text_left(cells[4], &fmt_dur(t.duration_secs), th.text, th.fg_dim);
+            f.text_left(cells[4], &key, th.text, th.fg_dim);
+            f.text_left(cells[5], &fmt_dur(t.duration_secs), th.text, th.fg_dim);
+        }
+        if let Some(at) = insert_at {
+            let y = rows.area.y + at as f32 * ROW_H - self.scroll;
+            f.p.set_layer(1);
+            f.p.fill_rrect(Rect::new(rows.area.x, y - 2.5, rows.area.w, 5.0), 2.5, th.accent);
+            f.p.set_layer(0);
         }
         f.pop_clip();
         if let Some(id) = clicked {

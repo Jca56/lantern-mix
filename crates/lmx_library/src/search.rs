@@ -3,7 +3,7 @@
 //! MVP: case-folded token prefix matching over title/artist/album/file name,
 //! plus sorting. The persistent index comes with the store.
 
-use crate::model::{SortBy, Track};
+use crate::model::{Library, SortBy, Track};
 
 fn fold(s: &str) -> String {
     s.to_lowercase()
@@ -28,13 +28,16 @@ pub fn matches(t: &Track, query: &str) -> bool {
     terms.iter().all(|term| words.iter().any(|w| w.starts_with(term)))
 }
 
-/// Indices into `tracks` that match `query`, sorted by `by` (ascending unless
-/// `desc`). Stable, so equal keys keep path order.
-pub fn view(tracks: &[Track], query: &str, by: SortBy, desc: bool) -> Vec<usize> {
+/// Indices into `lib.tracks` that match `query`, sorted by `by` (ascending
+/// unless `desc`). `Manual` follows the library's own order.
+pub fn view(lib: &Library, query: &str, by: SortBy, desc: bool) -> Vec<usize> {
+    let tracks = &lib.tracks;
     let mut idx: Vec<usize> = (0..tracks.len()).filter(|i| matches(&tracks[*i], query)).collect();
+    let pos = if by == SortBy::Manual { lib.positions() } else { Default::default() };
     idx.sort_by(|&a, &b| {
         let (ta, tb) = (&tracks[a], &tracks[b]);
         let ord = match by {
+            SortBy::Manual => pos.get(&ta.id).cmp(&pos.get(&tb.id)),
             SortBy::Title => fold(ta.display_title()).cmp(&fold(tb.display_title())),
             SortBy::Artist => fold(&ta.artist).cmp(&fold(&tb.artist)),
             SortBy::Bpm => ta.bpm().unwrap_or(0.0).partial_cmp(&tb.bpm().unwrap_or(0.0)).unwrap_or(std::cmp::Ordering::Equal),
@@ -52,15 +55,20 @@ mod tests {
     use crate::model::TrackId;
 
     fn t(title: &str, artist: &str, bpm: f32) -> Track {
-        Track { id: TrackId(title.len() as u64), title: title.into(), artist: artist.into(), bpm_tag: Some(bpm), ..Default::default() }
+        Track { id: TrackId(lmx_core::hash::hash64(title.as_bytes())), title: title.into(), artist: artist.into(), bpm_tag: Some(bpm), ..Default::default() }
     }
 
     #[test]
     fn prefix_tokens_and_sorting() {
-        let tracks = vec![t("Bangarang", "Skrillex", 110.0), t("Inferno", "Someone", 140.0), t("Rapture", "Alva", 150.0)];
-        assert_eq!(view(&tracks, "skr bang", SortBy::Title, false), vec![0]);
-        assert_eq!(view(&tracks, "zzz", SortBy::Title, false), Vec::<usize>::new());
-        assert_eq!(view(&tracks, "", SortBy::Bpm, true), vec![2, 1, 0]);
-        assert_eq!(view(&tracks, "", SortBy::Artist, false), vec![2, 0, 1]);
+        let mut lib = Library::default();
+        for tr in [t("Bangarang", "Skrillex", 110.0), t("Inferno", "Someone", 140.0), t("Rapture", "Alva", 150.0)] {
+            lib.upsert(tr);
+        }
+        assert_eq!(view(&lib, "skr bang", SortBy::Title, false), vec![0]);
+        assert_eq!(view(&lib, "zzz", SortBy::Title, false), Vec::<usize>::new());
+        assert_eq!(view(&lib, "", SortBy::Bpm, true), vec![2, 1, 0]);
+        assert_eq!(view(&lib, "", SortBy::Artist, false), vec![2, 0, 1]);
+        lib.move_before(lib.tracks[2].id, Some(lib.tracks[0].id));
+        assert_eq!(view(&lib, "", SortBy::Manual, false), vec![2, 0, 1]);
     }
 }
