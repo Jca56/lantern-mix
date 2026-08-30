@@ -2,8 +2,8 @@
 //!
 //! Sizes are logical px, already *big*, and always multiples of 5 (Alva's rule —
 //! 45 not 44, 55 not 56). Nothing goes below 20 px. No glows anywhere.
-//! Palette direction from Alva: neutral grey/black base (no blue tint, no brown),
-//! clearly stepped luminance between bg / panel / well / track, warm amber accent.
+//! Palette direction from Alva: neutral grey/black base, neutral accent, decks are
+//! plain Red / Green / Blue / Purple. This must NOT look like the Lantern plugins.
 
 use crate::Color;
 
@@ -71,22 +71,22 @@ impl Default for Theme {
             gap: 10.0,
             pad: 15.0,
             bg: Color::hex(0x0B0B0B),
-            panel: Color::hex(0x1E1E1E),
+            panel: Color::hex(0x151515),
             well: Color::hex(0x2E2E2E),
             well_deep: Color::hex(0x070707),
             border: Color::hex(0x525252),
             border_hot: Color::hex(0x9A9A9A),
             fg: Color::hex(0xF6F6F6),
             fg_dim: Color::hex(0xB8B8B8),
-            accent: Color::hex(0xFFB02E),
-            accent_hot: Color::hex(0xFFCF70),
+            accent: Color::hex(0xD8D8D8),
+            accent_hot: Color::hex(0xFFFFFF),
             warn: Color::hex(0xFF4646),
             ok: Color::hex(0x7CE04A),
             track: Color::hex(0x484848),
             grip: Color::hex(0xEDEDED),
             meter_ok: Color::hex(0x64D23C),
             meter_hot: Color::hex(0xFF3B30),
-            deck: [Color::hex(0xFF6A3D), Color::hex(0xFF4F6E), Color::hex(0xBFE84A), Color::hex(0xE86BFF)],
+            deck: [Color::hex(0xFF2E2E), Color::hex(0x2EDD4A), Color::hex(0x2E7BFF), Color::hex(0xB04DFF)],
         }
     }
 }
