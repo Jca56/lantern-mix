@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Lantern Mix
+Comment=DJ software, ours
+Exec=/home/alva/Projects/lantern-mix/target/release/lantern-mix %F
+Icon=lantern-mix
+Terminal=false
+Categories=AudioVideo;Audio;Music;
+MimeType=audio/x-wav;audio/wav;audio/flac;audio/aiff;audio/mpeg;
+StartupWMClass=lantern-mix

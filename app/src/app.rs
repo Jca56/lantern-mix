@@ -11,6 +11,7 @@ use winit::dpi::LogicalSize;
 use winit::event::{ElementState, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{Key, NamedKey};
+use winit::platform::wayland::WindowAttributesExtWayland;
 use winit::window::{Window, WindowId};
 
 use crate::db::Db;
@@ -236,9 +237,12 @@ impl ApplicationHandler<UserEvent> for App {
         if self.window.is_some() {
             return;
         }
+        // app_id "lantern-mix" is what the dock matches against lantern-mix.desktop
         let attrs = Window::default_attributes()
             .with_title("Lantern Mix")
+            .with_name("lantern-mix", "lantern-mix")
             .with_decorations(false)
+            .with_maximized(true)
             .with_inner_size(LogicalSize::new(1600.0, 1000.0));
         let window = Arc::new(event_loop.create_window(attrs).expect("create window"));
         let size = window.inner_size();

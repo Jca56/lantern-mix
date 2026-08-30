@@ -93,21 +93,33 @@ impl Browser {
             }
         }
 
-        // ── tree column ──
-        let mut tree = r.cut_left(250.0);
+        // ── sidebar: search on top, tree below ──
+        let mut side = r.cut_left(300.0);
         r.cut_left(th.gap);
+        f.p.fill_rrect(side, 5.0, th.well_deep);
+        f.p.fill_rect(Rect::new(side.right() - 5.0, side.y, 5.0, side.h), th.border);
+        let mut side = side.inset(10.0);
+        let field = side.cut_top(50.0);
+        if f.text_field(field, &mut self.query, &mut self.search_focus) {
+            self.view_dirty = true;
+        }
+        // magnifier at the right edge of the field
+        let mc = Vec2::new(field.right() - 25.0, field.center().y - 5.0);
+        f.p.circle_stroke(mc, 10.0, 5.0, th.fg_dim);
+        f.p.line(mc + Vec2::new(7.0, 7.0), mc + Vec2::new(15.0, 15.0), 5.0, th.fg_dim);
+        side.cut_top(th.gap);
         let count = lib.len();
         let names = [
-            if self.scanning { format!("COLLECTION  …") } else { format!("COLLECTION  {count}") },
+            if self.scanning { "COLLECTION  …".to_string() } else { format!("COLLECTION  {count}") },
             "PLAYLISTS".to_string(),
             "TAGS".to_string(),
             "HISTORY".to_string(),
         ];
         for (n, name) in names.iter().enumerate() {
-            if tree.h < 50.0 {
+            if side.h < 50.0 {
                 break;
             }
-            let row = tree.cut_top(50.0);
+            let row = side.cut_top(50.0);
             if n == 0 {
                 f.p.fill_rrect(row, 5.0, th.well);
             }
@@ -115,16 +127,6 @@ impl Browser {
             f.text_left(row.inset_xy(10.0, 0.0), name, th.text, if n == 0 { th.fg } else { th.fg_dim });
             f.pop_clip();
         }
-
-        // ── search ──
-        let mut top = r.cut_top(50.0);
-        let label = top.cut_left(110.0);
-        f.text_left(label, "SEARCH", th.text_small, th.fg_dim);
-        let field = top.cut_left(top.w.min(500.0));
-        if f.text_field(field, &mut self.query, &mut self.search_focus) {
-            self.view_dirty = true;
-        }
-        r.cut_top(th.gap);
 
         // ── header ──
         let head = r.cut_top(35.0);
