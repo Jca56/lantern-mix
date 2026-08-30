@@ -2,7 +2,8 @@
 //!
 //! Sizes are logical px, already *big*, and always multiples of 5 (Alva's rule —
 //! 45 not 44, 55 not 56). Nothing goes below 20 px. No glows anywhere.
-//! Palette direction from Alva: warm, not blue, high contrast.
+//! Palette direction from Alva: neutral grey/black base (no blue tint, no brown),
+//! clearly stepped luminance between bg / panel / well / track, warm amber accent.
 
 use crate::Color;
 
@@ -69,22 +70,22 @@ impl Default for Theme {
             line: 5.0,
             gap: 10.0,
             pad: 15.0,
-            bg: Color::hex(0x0D0B09),
-            panel: Color::hex(0x1C1814),
-            well: Color::hex(0x2A2420),
-            well_deep: Color::hex(0x110E0B),
-            border: Color::hex(0x5A4E42),
-            border_hot: Color::hex(0x9C8A76),
-            fg: Color::hex(0xFFF8EE),
-            fg_dim: Color::hex(0xC4B7A6),
-            accent: Color::hex(0xFFB238),
-            accent_hot: Color::hex(0xFFD07A),
-            warn: Color::hex(0xFF4A3A),
-            ok: Color::hex(0x8FE04A),
-            track: Color::hex(0x3A322B),
-            grip: Color::hex(0xF4ECE0),
-            meter_ok: Color::hex(0x7AD64A),
-            meter_hot: Color::hex(0xFF3B2F),
+            bg: Color::hex(0x0B0B0B),
+            panel: Color::hex(0x1E1E1E),
+            well: Color::hex(0x2E2E2E),
+            well_deep: Color::hex(0x070707),
+            border: Color::hex(0x525252),
+            border_hot: Color::hex(0x9A9A9A),
+            fg: Color::hex(0xF6F6F6),
+            fg_dim: Color::hex(0xB8B8B8),
+            accent: Color::hex(0xFFB02E),
+            accent_hot: Color::hex(0xFFCF70),
+            warn: Color::hex(0xFF4646),
+            ok: Color::hex(0x7CE04A),
+            track: Color::hex(0x484848),
+            grip: Color::hex(0xEDEDED),
+            meter_ok: Color::hex(0x64D23C),
+            meter_hot: Color::hex(0xFF3B30),
             deck: [Color::hex(0xFF6A3D), Color::hex(0xFF4F6E), Color::hex(0xBFE84A), Color::hex(0xE86BFF)],
         }
     }

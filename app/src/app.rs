@@ -13,7 +13,7 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{Key, NamedKey};
 use winit::window::{Window, WindowId};
 
-use crate::screens::{DemoScreen, Stats};
+use crate::screens::DemoScreen;
 
 struct Gfx {
     gpu: Gpu,
@@ -77,13 +77,8 @@ impl App {
         gfx.painter.begin(scale, (w, h));
         gfx.text.begin(scale, w, h);
         {
-            let stats = Stats {
-                adapter: gfx.gpu.adapter_name.clone(),
-                scale,
-                continuous: self.ui.wants_continuous(),
-            };
             let mut f = self.ui.frame(&mut gfx.painter, &mut gfx.text, &self.input, dt);
-            self.screen.draw(&mut f, &stats);
+            self.screen.draw(&mut f);
         }
         self.input.begin_frame();
         let bg = self.ui.theme.bg;

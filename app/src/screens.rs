@@ -6,12 +6,6 @@
 use lmx_ui::layout::hstack;
 use lmx_ui::{Rect, UiFrame, Vec2};
 
-pub struct Stats {
-    pub adapter: String,
-    pub scale: f32,
-    pub continuous: bool,
-}
-
 pub struct DemoScreen {
     xfader: f32,
     ch_fader: [f32; 4],
@@ -49,10 +43,10 @@ impl Default for DemoScreen {
 }
 
 impl DemoScreen {
-    pub fn draw(&mut self, f: &mut UiFrame, stats: &Stats) {
+    pub fn draw(&mut self, f: &mut UiFrame) {
         let th = f.theme().clone();
         let gap = th.gap;
-        let mut r = Rect::new(0.0, 0.0, f.size.x, f.size.y).inset(20.0);
+        let mut r = Rect::new(0.0, 0.0, f.size.x, f.size.y).inset(10.0);
 
         // fake signal so the meters move
         if self.animate {
@@ -65,14 +59,6 @@ impl DemoScreen {
             }
             f.animate();
         }
-
-        // ── header ──
-        let head = r.cut_top(80.0);
-        f.title(Vec2::new(head.x, head.y), "LANTERN MIX");
-        let live = if stats.continuous { "● LIVE" } else { "○ IDLE" };
-        let info = format!("{}   {:.0}×{:.0} @ {:.2}   {}", stats.adapter, f.size.x, f.size.y, stats.scale, live);
-        f.text_right(head, &info, th.text_small, th.fg_dim);
-        r.cut_top(gap);
 
         // ── bottom rows first so the mixer takes what's left ──
         let foot = r.cut_bottom(th.button_h);
