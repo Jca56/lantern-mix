@@ -14,6 +14,7 @@ use winit::keyboard::{Key, NamedKey};
 use winit::window::{Window, WindowId};
 
 use crate::screens::DemoScreen;
+use crate::wiring::Audio;
 
 struct Gfx {
     gpu: Gpu,
@@ -27,6 +28,7 @@ pub struct App {
     input: Input,
     ui: Ui,
     screen: DemoScreen,
+    audio: Audio,
     last_frame: Instant,
 }
 
@@ -38,6 +40,7 @@ impl App {
             input: Input::default(),
             ui: Ui::new(Theme::default()),
             screen: DemoScreen::default(),
+            audio: Audio::start(),
             last_frame: Instant::now(),
         }
     }
@@ -78,7 +81,7 @@ impl App {
         gfx.text.begin(scale, w, h);
         {
             let mut f = self.ui.frame(&mut gfx.painter, &mut gfx.text, &self.input, dt);
-            self.screen.draw(&mut f);
+            self.screen.draw(&mut f, &mut self.audio);
         }
         self.input.begin_frame();
         let bg = self.ui.theme.bg;

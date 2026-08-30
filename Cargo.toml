@@ -44,7 +44,7 @@ lmx_ui       = { path = "crates/lmx_ui" }
 # sanctioned external (DECISIONS D3) — pinned
 wgpu       = "28.0"
 winit      = "0.30"
-pipewire   = "0.10"
+pipewire   = { version = "0.10", features = ["v0_3_77"] }
 # ours, next door — never modified from this repo (pins wgpu at 28)
 lntrn-text = { path = "../Lantern-DE/lntrn-text" }
 lntrn-draw = { path = "../Lantern-DE/lntrn-render/draw" }   # only for the Color type lntrn-text takes

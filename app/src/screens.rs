@@ -3,6 +3,8 @@
 //! Phase 0: a demo screen that exercises every widget so the kit can be judged by
 //! eye — big text, buttons, faders, crossfader, knobs, meters, readouts.
 
+use crate::wiring::Audio;
+use lmx_audio::AudioState;
 use lmx_ui::layout::hstack;
 use lmx_ui::{Rect, UiFrame, Vec2};
 
@@ -13,12 +15,12 @@ pub struct DemoScreen {
     hi: [f32; 4],
     low: [f32; 4],
     master: f32,
+    master_level: (f32, f32),
     play: [bool; 2],
     sync: [bool; 2],
     keylock: [bool; 2],
     pfl: [bool; 4],
-    animate: bool,
-    phase: f32,
+    tone: bool,
     level: [f32; 4],
 }
 
@@ -31,32 +33,30 @@ impl Default for DemoScreen {
             hi: [0.5; 4],
             low: [0.5; 4],
             master: 0.75,
+            master_level: (-120.0, -120.0),
             play: [true, false],
             sync: [true, true],
             keylock: [true, false],
             pfl: [false, true, false, false],
-            animate: true,
-            phase: 0.0,
-            level: [-60.0; 4],
+            tone: false,
+            level: [-120.0; 4],
         }
     }
 }
 
 impl DemoScreen {
-    pub fn draw(&mut self, f: &mut UiFrame) {
+    pub fn draw(&mut self, f: &mut UiFrame, audio: &mut Audio) {
         let th = f.theme().clone();
         let gap = th.gap;
         let mut r = Rect::new(0.0, 0.0, f.size.x, f.size.y).inset(10.0);
 
-        // fake signal so the meters move
-        if self.animate {
-            self.phase += f.dt;
-            for (i, l) in self.level.iter_mut().enumerate() {
-                let t = self.phase * (1.3 + i as f32 * 0.37);
-                let gain = if i < 2 { self.ch_fader[i] } else { 0.0 };
-                let sig = (t.sin() * 0.5 + 0.5) * (t * 7.0).sin().abs();
-                *l = if gain > 0.0 { -40.0 + 46.0 * sig * gain } else { -60.0 };
-            }
+        // real levels from the RT thread; the tone plays on the first pair
+        let lv = audio.levels();
+        self.level = [lv.peak_db[0].max(-120.0), -120.0, -120.0, -120.0];
+        self.master_level = (lv.peak_db[0], lv.peak_db[1]);
+        audio.tone.set_on(self.tone);
+        audio.tone.gain.store(self.master);
+        if self.tone {
             f.animate();
         }
 
@@ -95,10 +95,22 @@ impl DemoScreen {
         f.text_right(Rect::new(xr.x - 100.0, xr.y, 90.0, xr.h), "A", th.text, th.deck[0]);
         f.text_left(Rect::new(xr.right() + 110.0, xr.y, 60.0, xr.h), "B", th.text, th.deck[1]);
 
-        // ── footer ──
+        // ── footer: test tone + audio status ──
         let mut fr = foot;
-        let tb = fr.cut_left(250.0);
-        f.toggle(tb, "ANIMATE METERS", &mut self.animate);
+        let tb = fr.cut_left(200.0);
+        f.toggle(tb, "TEST TONE", &mut self.tone);
+        fr.cut_left(gap);
+        let status = match (audio.state(), &audio.error) {
+            (_, Some(e)) => format!("AUDIO ERROR  {e}"),
+            (AudioState::Streaming, None) => format!("{} Hz  ·  {} frames", audio.rate(), audio.block()),
+            (s, None) => format!("{s:?}"),
+        };
+        let col = if audio.error.is_some() { th.warn } else { th.fg_dim };
+        f.text_left(fr, &status, th.text_small, col);
+        let x = audio.xruns();
+        if x > 0 {
+            f.text_right(fr, &format!("XRUNS {x}"), th.text, th.warn);
+        }
     }
 
     fn deck(&mut self, f: &mut UiFrame, i: usize, rect: Rect) {
@@ -166,7 +178,7 @@ impl DemoScreen {
         let meter = mid.cut_left(meter_w);
         f.vfader(fader, &mut self.ch_fader[i]);
         let l = self.level[i];
-        f.meter(meter, l, l - 1.5 + (i as f32) * 0.4);
+        f.meter(meter, l, l);
         let cb = cue.centered(cue.w.min(140.0), th.button_h);
         f.toggle_colored(cb, "CUE", &mut self.pfl[i], th.ok);
     }
@@ -183,9 +195,8 @@ impl DemoScreen {
         r.cut_top(th.gap);
         let b = r.cut_bottom(th.button_h);
         r.cut_bottom(th.gap);
-        let peak = self.level.iter().cloned().fold(-60.0f32, f32::max);
         let mrect = r.centered(th.meter_w * 2.0 + 10.0, r.h);
-        f.meter(mrect, peak, peak - 0.7);
+        f.meter(mrect, self.master_level.0, self.master_level.1);
         if f.button(b.centered(b.w.min(180.0), th.button_h), "PANIC") {
             self.play = [false, false];
         }

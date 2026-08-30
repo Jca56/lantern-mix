@@ -1,8 +1,15 @@
-//! Audio host: PipeWire stream (official pipewire crate), device/profile discovery, rate negotiation; calls Engine::process from the RT thread.
+//! Audio host: PipeWire stream (official pipewire crate), device/profile discovery,
+//! rate negotiation; calls the render callback from the RT thread.
 //!
-//! Design: see `docs/` — this crate is a skeleton; responsibilities and module
-//! boundaries are decided, logic is not written yet.
+//! The engine (`lmx_engine`) will implement `AudioRender`; until then `TestTone`
+//! does, which is also what the settings screen will use to test outputs.
+//! Design: `docs/02-AUDIO-ENGINE.md` (Latency and buffer policy), `docs/01-ARCHITECTURE.md`.
 
+pub mod devices;
 pub mod host;
 pub mod pw;
-pub mod devices;
+pub mod tone;
+
+pub use host::{AudioConfig, AudioRender, AudioState, AudioStatus};
+pub use pw::AudioHost;
+pub use tone::{Levels, TestTone, ToneControl};
