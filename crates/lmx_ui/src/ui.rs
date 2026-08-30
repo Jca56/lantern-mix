@@ -25,6 +25,9 @@ pub struct Ui {
     scope: Vec<u64>,
     scope_hash: u64,
     continuous: bool,
+    /// A press/release/click changed state this frame: draw one more frame so
+    /// the result is visible (and pushed downstream) without waiting for input.
+    repaint_once: bool,
     time: f64,
 }
 
@@ -58,6 +61,7 @@ impl Ui {
             scope: Vec::new(),
             scope_hash: 0,
             continuous: false,
+            repaint_once: false,
             time: 0.0,
         }
     }
@@ -65,6 +69,7 @@ impl Ui {
     /// Begin a frame. `dt` is seconds since the last frame.
     pub fn frame<'a>(&'a mut self, p: &'a mut Painter, t: &'a mut Text, input: &'a Input, dt: f32) -> UiFrame<'a> {
         self.continuous = false;
+        self.repaint_once = false;
         self.time += dt as f64;
         self.scope.clear();
         self.scope_hash = 0;
@@ -72,9 +77,10 @@ impl Ui {
         UiFrame { ui: self, p, t, input, dt, size }
     }
 
-    /// True while something is animating or being dragged: keep redrawing.
+    /// True while something is animating or being dragged, or a click just
+    /// changed state: draw again without waiting for input.
     pub fn wants_continuous(&self) -> bool {
-        self.continuous || self.active.is_some()
+        self.continuous || self.active.is_some() || self.repaint_once
     }
 
     pub fn hot(&self) -> Option<Id> {
@@ -184,6 +190,9 @@ impl UiFrame<'_> {
         }
         if it.held || it.released {
             it.drag = self.input.mouse_delta();
+        }
+        if it.pressed || it.released {
+            self.ui.repaint_once = true;
         }
         it
     }

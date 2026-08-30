@@ -54,8 +54,6 @@ impl DemoScreen {
         let lv = audio.levels();
         self.level = [lv.peak_db[0].max(-120.0), -120.0, -120.0, -120.0];
         self.master_level = (lv.peak_db[0], lv.peak_db[1]);
-        audio.tone.set_on(self.tone);
-        audio.tone.gain.store(self.master);
         if self.tone {
             f.animate();
         }
@@ -111,6 +109,11 @@ impl DemoScreen {
         if x > 0 {
             f.text_right(fr, &format!("XRUNS {x}"), th.text, th.warn);
         }
+
+        // push this frame's control state to the audio thread — after the widgets
+        // have run, so a click takes effect in the same frame it lands
+        audio.tone.set_on(self.tone);
+        audio.tone.gain.store(self.master);
     }
 
     fn deck(&mut self, f: &mut UiFrame, i: usize, rect: Rect) {
