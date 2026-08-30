@@ -78,7 +78,7 @@ impl Ui {
         self.scope.clear();
         self.scope_hash = 0;
         let size = p.logical_size();
-        UiFrame { ui: self, p, t, input, dt, size }
+        UiFrame { ui: self, p, t, input, dt, size, occluders: Vec::new(), late: Vec::new(), late_mode: false }
     }
 
     /// True while something is animating or being dragged, or a click just
@@ -107,6 +107,16 @@ impl Ui {
     }
 }
 
+/// Text an overlay wants drawn above everything, queued at frame end.
+pub(crate) struct LateText {
+    pub s: String,
+    pub size: f32,
+    pub x: f32,
+    pub y: f32,
+    pub color: crate::Color,
+    pub bold: bool,
+}
+
 pub struct UiFrame<'a> {
     pub ui: &'a mut Ui,
     pub p: &'a mut Painter,
@@ -115,10 +125,26 @@ pub struct UiFrame<'a> {
     pub dt: f32,
     /// Logical size of the window.
     pub size: Vec2,
+    /// Overlay panels: text queued underneath them is punched out at frame end.
+    pub(crate) occluders: Vec<Rect>,
+    /// Text drawn after the occlusion pass (overlay labels).
+    pub(crate) late: Vec<LateText>,
+    /// While set, text helpers queue into `late` instead of the renderer.
+    pub(crate) late_mode: bool,
 }
 
 impl Drop for UiFrame<'_> {
     fn drop(&mut self) {
+        for r in std::mem::take(&mut self.occluders) {
+            self.t.occlude(r);
+        }
+        for l in std::mem::take(&mut self.late) {
+            if l.bold {
+                self.t.draw_bold(&l.s, l.size, l.x, l.y, l.color);
+            } else {
+                self.t.draw(&l.s, l.size, l.x, l.y, l.color);
+            }
+        }
         self.ui.hot = self.ui.hot_next.take();
         if !self.input.down(MouseButton::Left) {
             self.ui.active = None;
@@ -161,6 +187,17 @@ impl UiFrame<'_> {
     /// (open menus, modals). Call before drawing what should be blocked.
     pub fn set_modal(&mut self, r: Rect) {
         self.ui.modal = Some(r);
+    }
+
+    /// Declare `r` an overlay panel: text queued beneath it this frame is hidden.
+    /// Draw the panel's own text with `late_mode` so it lands on top.
+    pub fn occlude(&mut self, r: Rect) {
+        self.occluders.push(r);
+    }
+
+    /// Route text helpers to the end-of-frame pass (for overlays).
+    pub fn set_late_mode(&mut self, on: bool) {
+        self.late_mode = on;
     }
 
     /// Clip shapes and text to `r` until `pop_clip`.

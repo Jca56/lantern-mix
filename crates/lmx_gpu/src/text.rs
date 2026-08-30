@@ -79,6 +79,12 @@ impl Text {
         self.r.pop_clip();
     }
 
+    /// Hide already-queued text inside `r` (an overlay panel drawn over it).
+    pub fn occlude(&mut self, r: Rect) {
+        let k = self.scale;
+        self.r.occlude_rect([r.x * k, r.y * k, r.w * k, r.h * k]);
+    }
+
     /// Draw everything queued this frame.
     pub fn render(&mut self, encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView) {
         self.r.render(encoder, view, self.w, self.h);
