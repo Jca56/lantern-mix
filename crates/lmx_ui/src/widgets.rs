@@ -11,7 +11,7 @@ use std::f32::consts::PI;
 const KNOB_A0: f32 = 0.75 * PI;
 const KNOB_SWEEP: f32 = 1.5 * PI;
 /// Vertical drag distance (logical px) for a knob's full range.
-const KNOB_DRAG_PX: f32 = 220.0;
+const KNOB_DRAG_PX: f32 = 200.0;
 
 impl UiFrame<'_> {
     // ── text ─────────────────────────────────────────────────────────────
@@ -68,7 +68,7 @@ impl UiFrame<'_> {
         self.t.draw_bold(value, th.readout, rect.x, y, color);
         if !unit.is_empty() {
             let uy = th.text_y(rect.y, rect.h, th.text_small) + (th.readout - th.text_small) * 0.42;
-            self.t.draw(unit, th.text_small, rect.x + vw + 8.0, uy, th.fg_dim);
+            self.t.draw(unit, th.text_small, rect.x + vw + 10.0, uy, th.fg_dim);
         }
     }
 
@@ -83,7 +83,7 @@ impl UiFrame<'_> {
 
     pub fn well(&mut self, rect: Rect) {
         let th = &self.ui.theme;
-        let (fill, r) = (th.well_deep, th.radius * 0.6);
+        let (fill, r) = (th.well_deep, th.radius * 0.5);
         self.p.fill_rrect(rect, r, fill);
     }
 
@@ -129,12 +129,9 @@ impl UiFrame<'_> {
             th.well
         };
         let border = if *on { color.lighten(0.3) } else if it.hovered { th.border_hot } else { th.border };
-        let fg = if *on { th.fg } else { th.fg_dim };
+        let fg = if *on { th.well_deep } else { th.fg_dim };
         self.p.fill_rrect(rect, th.radius, fill);
         self.p.stroke_rrect(rect, th.radius, th.stroke, border);
-        if *on {
-            self.p.glow(rect.center(), rect.w.max(rect.h) * 0.9, color.with_alpha(0.25));
-        }
         self.text_centered(rect, label, th.text, fg);
         it.clicked
     }
@@ -201,7 +198,7 @@ impl UiFrame<'_> {
             } else {
                 (Vec2::new(c.x, rect.y), Vec2::new(c.x, rect.bottom()))
             };
-            self.p.line(a, b, 2.0, th.border);
+            self.p.line(a, b, th.line, th.border);
         }
         let g = if vertical {
             Rect::new(rect.x, gpos, rect.w, grip)
@@ -209,15 +206,14 @@ impl UiFrame<'_> {
             Rect::new(gpos, rect.y, grip, rect.h)
         };
         let gc = if it.held { th.accent_hot } else if it.hovered { th.grip.lighten(0.2) } else { th.grip };
-        self.p.fill_rrect(g, 6.0, gc);
-        self.p.stroke_rrect(g, 6.0, 2.0, th.well_deep);
+        self.p.fill_rrect(g, 5.0, gc);
         // grip line
         let (a, b) = if vertical {
-            (Vec2::new(g.x + 6.0, g.center().y), Vec2::new(g.right() - 6.0, g.center().y))
+            (Vec2::new(g.x + 5.0, g.center().y), Vec2::new(g.right() - 5.0, g.center().y))
         } else {
-            (Vec2::new(g.center().x, g.y + 6.0), Vec2::new(g.center().x, g.bottom() - 6.0))
+            (Vec2::new(g.center().x, g.y + 5.0), Vec2::new(g.center().x, g.bottom() - 5.0))
         };
-        self.p.line(a, b, 3.0, th.well_deep);
+        self.p.line(a, b, th.line, th.well_deep);
         (*v - before).abs() > 1e-6
     }
 
@@ -236,23 +232,20 @@ impl UiFrame<'_> {
             let fine = if self.input.shift { 0.1 } else { 1.0 };
             *v = (*v - it.drag.y / KNOB_DRAG_PX * fine).clamp(0.0, 1.0);
         }
-        let thick = (radius * 0.18).max(6.0);
-        if it.hovered || it.held {
-            self.p.glow(center, radius * 1.35, color.with_alpha(0.22));
-        }
+        let thick = 10.0;
         self.p.arc(center, radius, thick, KNOB_A0, KNOB_A0 + KNOB_SWEEP, th.track);
         let a1 = KNOB_A0 + KNOB_SWEEP * *v;
         if *v > 0.002 {
             self.p.arc(center, radius, thick, KNOB_A0, a1, color);
         }
-        let body = radius - thick - 6.0;
+        let body = radius - thick - 5.0;
         self.p.circle(center, body, th.well_deep);
         self.p.circle_stroke(center, body, th.stroke, if it.hovered || it.held { th.border_hot } else { th.border });
-        let tip = center + Vec2::from_angle(a1, body - 4.0);
+        let tip = center + Vec2::from_angle(a1, body - 5.0);
         let root = center + Vec2::from_angle(a1, body * 0.45);
-        self.p.line(root, tip, 4.0, th.fg);
+        self.p.line(root, tip, th.line, th.fg);
         if !label.is_empty() {
-            let lr = Rect::new(center.x - radius * 1.5, center.y + radius + 4.0, radius * 3.0, th.text * 1.3);
+            let lr = Rect::new(center.x - radius * 1.5, center.y + radius + 5.0, radius * 3.0, th.text * 1.4);
             self.text_centered(lr, label, th.text, th.fg_dim);
         }
         (*v - before).abs() > 1e-6
@@ -264,8 +257,8 @@ impl UiFrame<'_> {
     pub fn meter(&mut self, rect: Rect, db_l: f32, db_r: f32) {
         let th = self.ui.theme.clone();
         self.well(rect);
-        let inner = rect.inset(4.0);
-        let gap = 4.0;
+        let inner = rect.inset(5.0);
+        let gap = 5.0;
         let bw = (inner.w - gap) * 0.5;
         let bars = [Rect::new(inner.x, inner.y, bw, inner.h), Rect::new(inner.x + bw + gap, inner.y, bw, inner.h)];
         let map = |db: f32| ((db + 60.0) / 63.0).clamp(0.0, 1.0);
@@ -276,15 +269,15 @@ impl UiFrame<'_> {
             let y_zero = bar.bottom() - bar.h * zero_t;
             let green_top = y_top.max(y_zero);
             if green_top < bar.bottom() {
-                self.p.fill_rrect(Rect::new(bar.x, green_top, bar.w, bar.bottom() - green_top), 3.0, th.meter_ok);
+                self.p.fill_rrect(Rect::new(bar.x, green_top, bar.w, bar.bottom() - green_top), 5.0, th.meter_ok);
             }
             if y_top < y_zero {
-                self.p.fill_rrect(Rect::new(bar.x, y_top, bar.w, y_zero - y_top), 3.0, th.meter_hot);
+                self.p.fill_rrect(Rect::new(bar.x, y_top, bar.w, y_zero - y_top), 5.0, th.meter_hot);
             }
         }
-        for db in [0.0, -6.0, -12.0, -24.0, -48.0] {
-            let y = inner.bottom() - inner.h * map(db);
-            self.p.line(Vec2::new(inner.x, y), Vec2::new(inner.right(), y), 2.0, th.border.with_alpha(0.8));
-        }
+        // 0 dB mark: short ticks on both outer edges
+        let y = inner.bottom() - inner.h * zero_t;
+        self.p.fill_rect(Rect::new(rect.x, y - 2.5, 5.0, 5.0), th.fg_dim);
+        self.p.fill_rect(Rect::new(rect.right() - 5.0, y - 2.5, 5.0, 5.0), th.fg_dim);
     }
 }

@@ -28,8 +28,6 @@ pub struct App {
     ui: Ui,
     screen: DemoScreen,
     last_frame: Instant,
-    frame_ms: f32,
-    frames: u64,
 }
 
 impl App {
@@ -41,8 +39,6 @@ impl App {
             ui: Ui::new(Theme::default()),
             screen: DemoScreen::default(),
             last_frame: Instant::now(),
-            frame_ms: 0.0,
-            frames: 0,
         }
     }
 
@@ -78,14 +74,11 @@ impl App {
             window.request_redraw();
             return;
         };
-        let t0 = Instant::now();
         gfx.painter.begin(scale, (w, h));
         gfx.text.begin(scale, w, h);
         {
             let stats = Stats {
                 adapter: gfx.gpu.adapter_name.clone(),
-                frame_ms: self.frame_ms,
-                frames: self.frames,
                 scale,
                 continuous: self.ui.wants_continuous(),
             };
@@ -98,8 +91,6 @@ impl App {
         gfx.text.render(&mut frame.encoder, &frame.view);
         window.pre_present_notify();
         gfx.gpu.end_frame(frame);
-        self.frame_ms = t0.elapsed().as_secs_f32() * 1000.0;
-        self.frames += 1;
         if self.ui.wants_continuous() {
             window.request_redraw();
         }

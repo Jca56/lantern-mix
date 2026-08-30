@@ -213,12 +213,6 @@ impl Painter {
         self.push([r.x, r.y, r.w, r.h], shapes::KIND_CIRCLE, 0.0, 0.0, shapes::GRAD_NONE, c, c, [0.0; 4]);
     }
 
-    /// Radial glow: `c` at the center fading to transparent at `radius`.
-    pub fn glow(&mut self, center: Vec2, radius: f32, c: Color) {
-        let r = Rect::from_center(center, radius * 2.0, radius * 2.0);
-        self.push([r.x, r.y, r.w, r.h], shapes::KIND_CIRCLE, 0.0, 0.0, shapes::GRAD_RADIAL, c, c.with_alpha(0.0), [0.0; 4]);
-    }
-
     pub fn circle_stroke(&mut self, center: Vec2, radius: f32, width: f32, c: Color) {
         let r = Rect::from_center(center, radius * 2.0, radius * 2.0);
         self.push([r.x, r.y, r.w, r.h], shapes::KIND_CIRCLE, 0.0, width, shapes::GRAD_NONE, c, c, [0.0; 4]);

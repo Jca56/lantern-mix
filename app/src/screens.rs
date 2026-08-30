@@ -8,8 +8,6 @@ use lmx_ui::{Rect, UiFrame, Vec2};
 
 pub struct Stats {
     pub adapter: String,
-    pub frame_ms: f32,
-    pub frames: u64,
     pub scale: f32,
     pub continuous: bool,
 }
@@ -20,6 +18,7 @@ pub struct DemoScreen {
     trim: [f32; 4],
     hi: [f32; 4],
     low: [f32; 4],
+    master: f32,
     play: [bool; 2],
     sync: [bool; 2],
     keylock: [bool; 2],
@@ -37,6 +36,7 @@ impl Default for DemoScreen {
             trim: [0.5; 4],
             hi: [0.5; 4],
             low: [0.5; 4],
+            master: 0.75,
             play: [true, false],
             sync: [true, true],
             keylock: [true, false],
@@ -51,9 +51,8 @@ impl Default for DemoScreen {
 impl DemoScreen {
     pub fn draw(&mut self, f: &mut UiFrame, stats: &Stats) {
         let th = f.theme().clone();
-        let pad = th.pad;
         let gap = th.gap;
-        let mut r = Rect::new(0.0, 0.0, f.size.x, f.size.y).inset(pad * 1.5);
+        let mut r = Rect::new(0.0, 0.0, f.size.x, f.size.y).inset(20.0);
 
         // fake signal so the meters move
         if self.animate {
@@ -68,15 +67,18 @@ impl DemoScreen {
         }
 
         // ── header ──
-        let head = r.cut_top(th.title * 1.3);
+        let head = r.cut_top(80.0);
         f.title(Vec2::new(head.x, head.y), "LANTERN MIX");
         let live = if stats.continuous { "● LIVE" } else { "○ IDLE" };
-        let info = format!(
-            "{}   {:.0}×{:.0} @ {:.2}   {:.2} ms   {} frames   {}",
-            stats.adapter, f.size.x, f.size.y, stats.scale, stats.frame_ms, stats.frames, live
-        );
+        let info = format!("{}   {:.0}×{:.0} @ {:.2}   {}", stats.adapter, f.size.x, f.size.y, stats.scale, live);
         f.text_right(head, &info, th.text_small, th.fg_dim);
         r.cut_top(gap);
+
+        // ── bottom rows first so the mixer takes what's left ──
+        let foot = r.cut_bottom(th.button_h);
+        r.cut_bottom(gap);
+        let xf = r.cut_bottom(70.0);
+        r.cut_bottom(gap);
 
         // ── decks ──
         let decks = r.cut_top(170.0);
@@ -88,64 +90,56 @@ impl DemoScreen {
         r.cut_top(gap);
 
         // ── mixer ──
-        let mixer_h = (r.h - 90.0 - gap * 2.0).max(300.0);
-        let mixer = r.cut_top(mixer_h);
+        let mixer = r;
         f.panel(mixer);
-        let inner = mixer.inset(pad);
-        let strips = hstack(inner, &[0.0, 0.0, 0.0, 0.0, 12.0, 220.0], gap);
+        let inner = mixer.inset(th.pad);
+        let strips = hstack(inner, &[0.0, 0.0, 0.0, 0.0, 10.0, 220.0], gap);
         for i in 0..4 {
             f.push_scope(i as u64);
             self.strip(f, i, strips[i]);
             f.pop_scope();
         }
-        let side = strips[5];
-        self.side(f, side);
-        r.cut_top(gap);
+        self.side(f, strips[5]);
 
         // ── crossfader ──
-        let xf = r.cut_top(64.0);
-        let xr = xf.centered(xf.w.min(760.0), 48.0);
+        let xr = xf.centered(xf.w.min(750.0), 50.0);
         f.crossfader(xr, &mut self.xfader);
         let xl = format!("{:>3.0}%", self.xfader * 100.0);
         f.text_right(Rect::new(xr.right() + gap, xr.y, 90.0, xr.h), &xl, th.text, th.fg_dim);
-        f.text_right(Rect::new(xr.x - 90.0 - gap, xr.y, 90.0, xr.h), "A", th.readout * 0.6, th.deck[0]);
-        f.text_left(Rect::new(xr.right() + 110.0, xr.y, 60.0, xr.h), "B", th.readout * 0.6, th.deck[1]);
-        r.cut_top(gap);
+        f.text_right(Rect::new(xr.x - 100.0, xr.y, 90.0, xr.h), "A", th.text, th.deck[0]);
+        f.text_left(Rect::new(xr.right() + 110.0, xr.y, 60.0, xr.h), "B", th.text, th.deck[1]);
 
         // ── footer ──
-        let foot = r.cut_top(th.button_h);
         let mut fr = foot;
-        let tb = fr.cut_left(260.0);
+        let tb = fr.cut_left(250.0);
         f.toggle(tb, "ANIMATE METERS", &mut self.animate);
-        fr.cut_left(gap);
-        f.text_left(fr, "Esc quits · shift-drag knobs for fine · nothing redraws while ○ IDLE", th.text_small, th.fg_dim);
     }
 
     fn deck(&mut self, f: &mut UiFrame, i: usize, rect: Rect) {
         let th = f.theme().clone();
         let color = th.deck[i];
         f.panel(rect);
-        f.p.fill_rrect(Rect::new(rect.x, rect.y, 8.0, rect.h), 4.0, color);
+        f.p.fill_rrect(Rect::new(rect.x, rect.y, 10.0, rect.h), 5.0, color);
         let inner = rect.inset(th.pad);
         let mut top = inner;
-        let mut head = top.cut_top(th.text * 1.4);
+        let mut head = top.cut_top(35.0);
         let tag = format!("DECK {}", i + 1);
         f.text_bold(&tag, th.text, Vec2::new(head.x, head.y), color);
         head.cut_left(120.0);
         let name = if i == 0 { "Untitled Wub — Someone" } else { "Nothing loaded" };
         f.text_left(head, name, th.text, if i == 0 { th.fg } else { th.fg_dim });
 
-        top.cut_top(6.0);
-        let mut row = top.cut_top(th.readout * 1.25);
-        let bpm = row.cut_left(230.0);
+        top.cut_top(5.0);
+        let mut row = top.cut_top(60.0);
+        let bpm = row.cut_left(250.0);
         f.readout(bpm, if i == 0 { "140.00" } else { "---.--" }, "BPM", th.fg);
         let key = row.cut_left(150.0);
         f.readout(key, if i == 0 { "8A" } else { "--" }, "KEY", if i == 0 { th.ok } else { th.fg_dim });
-        let time = row.cut_left(230.0);
+        let time = row.cut_left(250.0);
         f.readout(time, if i == 0 { "-02:14.5" } else { "--:--.-" }, "", th.fg);
 
         // transport buttons on the right of the readout row
-        let bw = 118.0;
+        let bw = 120.0;
         let mut br = Rect::new(inner.right() - (bw * 3.0 + th.gap * 2.0), row.y, bw * 3.0 + th.gap * 2.0, th.button_h);
         let b1 = br.cut_left(bw);
         br.cut_left(th.gap);
@@ -161,11 +155,11 @@ impl DemoScreen {
         let th = f.theme().clone();
         let color = th.deck[i];
         let mut r = rect;
-        let head = r.cut_top(th.text * 1.4);
+        let head = r.cut_top(35.0);
         f.text_centered(head, &format!("CH {}", i + 1), th.text, color);
         r.cut_top(th.gap);
         let kr = th.knob_r;
-        let knob_h = kr * 2.0 + th.text * 1.6 + th.gap;
+        let knob_h = kr * 2.0 + 40.0 + th.gap;
         let cx = r.center().x;
         let k1 = r.cut_top(knob_h);
         f.knob(Vec2::new(cx, k1.y + kr), kr, &mut self.trim[i], "TRIM", color);
@@ -177,8 +171,8 @@ impl DemoScreen {
         let cue = r.cut_bottom(th.button_h);
         let mut fr = r;
         fr.cut_bottom(th.gap);
-        let meter_w = th.meter_w * 2.0 + 12.0;
-        let fw = th.fader_grip * 2.2;
+        let meter_w = th.meter_w * 2.0 + 10.0;
+        let fw = 60.0;
         let total = fw + th.gap + meter_w;
         let mut mid = Rect::new(fr.center().x - total * 0.5, fr.y, total, fr.h);
         let fader = mid.cut_left(fw);
@@ -194,26 +188,18 @@ impl DemoScreen {
     fn side(&mut self, f: &mut UiFrame, rect: Rect) {
         let th = f.theme().clone();
         let mut r = rect;
-        let head = r.cut_top(th.text * 1.4);
+        let head = r.cut_top(35.0);
         f.text_centered(head, "MASTER", th.text, th.fg_dim);
         r.cut_top(th.gap);
-        let kr = th.knob_r * 1.3;
-        let k = r.cut_top(kr * 2.0 + th.text * 1.6 + th.gap);
-        let id = f.id();
-        let mut master = f.mem(id).f;
-        if master == 0.0 {
-            master = 0.75;
-        }
-        f.knob(Vec2::new(k.center().x, k.y + kr), kr, &mut master, "LEVEL", th.accent);
-        f.mem(id).f = master;
+        let kr = 60.0;
+        let k = r.cut_top(kr * 2.0 + 40.0 + th.gap);
+        f.knob(Vec2::new(k.center().x, k.y + kr), kr, &mut self.master, "LEVEL", th.accent);
         r.cut_top(th.gap);
-        let mut mr = r;
-        let mm = mr.cut_top((mr.h - th.button_h - th.gap).max(120.0));
+        let b = r.cut_bottom(th.button_h);
+        r.cut_bottom(th.gap);
         let peak = self.level.iter().cloned().fold(-60.0f32, f32::max);
-        let mrect = mm.centered(th.meter_w * 2.0 + 12.0, mm.h);
+        let mrect = r.centered(th.meter_w * 2.0 + 10.0, r.h);
         f.meter(mrect, peak, peak - 0.7);
-        mr.cut_top(th.gap);
-        let b = mr.cut_top(th.button_h);
         if f.button(b.centered(b.w.min(180.0), th.button_h), "PANIC") {
             self.play = [false, false];
         }
