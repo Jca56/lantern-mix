@@ -253,6 +253,24 @@ impl UiFrame<'_> {
 
     // ── meter ────────────────────────────────────────────────────────────
 
+    /// Single-bar peak meter, same scale as `meter`.
+    pub fn meter_mono(&mut self, rect: Rect, db: f32) {
+        let th = self.ui.theme.clone();
+        self.well(rect);
+        let bar = rect.inset(5.0);
+        let map = |db: f32| ((db + 60.0) / 63.0).clamp(0.0, 1.0);
+        let t = map(db);
+        let y_top = bar.bottom() - bar.h * t;
+        let y_zero = bar.bottom() - bar.h * map(0.0);
+        let green_top = y_top.max(y_zero);
+        if green_top < bar.bottom() {
+            self.p.fill_rrect(Rect::new(bar.x, green_top, bar.w, bar.bottom() - green_top), 5.0, th.meter_ok);
+        }
+        if y_top < y_zero {
+            self.p.fill_rrect(Rect::new(bar.x, y_top, bar.w, y_zero - y_top), 5.0, th.meter_hot);
+        }
+    }
+
     /// Stereo peak meter. Levels in dBFS; scale −60…+3, red above 0.
     pub fn meter(&mut self, rect: Rect, db_l: f32, db_r: f32) {
         let th = self.ui.theme.clone();

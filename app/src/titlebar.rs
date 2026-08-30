@@ -29,8 +29,9 @@ pub struct TitleBar {
 
 impl TitleBar {
     /// Draws the bar across the top of the window. Returns what the user asked
-    /// for and the cursor the window should show.
-    pub fn draw(&mut self, f: &mut UiFrame, maximized: bool) -> (TitleAction, CursorIcon) {
+    /// for, the cursor the window should show, and the bar's free left area
+    /// (the screen may put small status widgets there).
+    pub fn draw(&mut self, f: &mut UiFrame, maximized: bool) -> (TitleAction, CursorIcon, Rect) {
         let th = f.theme().clone();
         let bar = Rect::new(0.0, 0.0, f.size.x, HEIGHT);
         f.p.fill_rect(bar, th.panel);
@@ -48,7 +49,7 @@ impl TitleBar {
                     ResizeDirection::NorthEast | ResizeDirection::SouthWest => CursorIcon::NeswResize,
                 };
                 if f.input.pressed(lmx_ui::MouseButton::Left) {
-                    return (TitleAction::Resize(dir), cursor);
+                    return (TitleAction::Resize(dir), cursor, Rect::ZERO);
                 }
             }
         }
@@ -68,7 +69,9 @@ impl TitleBar {
             action = TitleAction::Close;
         }
 
-        // ── drag area: whatever is left of the bar ──
+        // ── drag area: whatever is left of the bar (status widgets go in
+        // the left half; they're drawn by the screen after this, on top) ──
+        let free = Rect::new(right.x + 10.0, right.y + 5.0, (right.w * 0.5).max(0.0), right.h - 10.0);
         let id = f.id();
         let it = f.interact(id, right);
         if it.pressed {
@@ -82,7 +85,7 @@ impl TitleBar {
                 action = TitleAction::Drag;
             }
         }
-        (action, cursor)
+        (action, cursor, free)
     }
 
     #[track_caller]

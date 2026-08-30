@@ -13,7 +13,7 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{Key, NamedKey};
 use winit::window::{Window, WindowId};
 
-use crate::screens::DemoScreen;
+use crate::screens::PerformanceScreen;
 use crate::titlebar::{self, TitleAction, TitleBar};
 use crate::wiring::Audio;
 use lmx_ui::Rect;
@@ -30,7 +30,7 @@ pub struct App {
     gfx: Option<Gfx>,
     input: Input,
     ui: Ui,
-    screen: DemoScreen,
+    screen: PerformanceScreen,
     audio: Audio,
     titlebar: TitleBar,
     cursor: CursorIcon,
@@ -45,7 +45,7 @@ impl App {
             gfx: None,
             input: Input::default(),
             ui: Ui::new(Theme::default()),
-            screen: DemoScreen::default(),
+            screen: PerformanceScreen::default(),
             audio: Audio::start(),
             titlebar: TitleBar::default(),
             cursor: CursorIcon::Default,
@@ -91,9 +91,9 @@ impl App {
         let maximized = window.is_maximized();
         let (action, cursor) = {
             let mut f = self.ui.frame(&mut gfx.painter, &mut gfx.text, &self.input, dt);
-            let (action, cursor) = self.titlebar.draw(&mut f, maximized);
+            let (action, cursor, bar_free) = self.titlebar.draw(&mut f, maximized);
             let area = Rect::new(0.0, titlebar::HEIGHT, f.size.x, f.size.y - titlebar::HEIGHT);
-            self.screen.draw(&mut f, &mut self.audio, area);
+            self.screen.draw(&mut f, &mut self.audio, area, bar_free);
             (action, cursor)
         };
         self.input.begin_frame();
