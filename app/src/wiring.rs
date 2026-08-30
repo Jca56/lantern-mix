@@ -23,6 +23,8 @@ pub struct Audio {
     snapshot: Snapshot,
     /// Load commands that didn't fit the ring yet.
     pending: Vec<EngineCommand>,
+    seen_xruns: u64,
+    started: std::time::Instant,
 }
 
 impl Audio {
@@ -44,7 +46,7 @@ impl Audio {
                 (None, Some(e))
             }
         };
-        Self { host, error, handles, snapshot: Snapshot::default(), pending: Vec::new() }
+        Self { host, error, handles, snapshot: Snapshot::default(), pending: Vec::new(), seen_xruns: 0, started: std::time::Instant::now() }
     }
 
     /// Call once per frame: drains retired tracks (dropping them here, off the
@@ -58,6 +60,11 @@ impl Audio {
             self.send(c);
         }
         self.snapshot = self.handles.snapshot.read();
+        let x = self.xruns();
+        if x != self.seen_xruns {
+            eprintln!("lantern-mix: late audio callback #{x} at t+{:.1}s", self.started.elapsed().as_secs_f32());
+            self.seen_xruns = x;
+        }
         self.snapshot
     }
 

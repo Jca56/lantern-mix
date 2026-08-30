@@ -160,7 +160,7 @@ impl WaveformRenderer {
             capacity,
             entries: HashMap::new(),
             next_id: 1,
-            colors: [Color::hex(0xFF3030), Color::hex(0x30E050), Color::hex(0x40A0FF)],
+            colors: [Color::hex(0xFF1414), Color::hex(0x10D030), Color::hex(0x1A5CFF)],
         }
     }
 
@@ -351,11 +351,11 @@ fn fs_main(in: VOut) -> @location(0) vec4<f32> {
     let d = abs(p.y - cy);
     let cov = clamp(peak * half - d + 0.5, 0.0, 1.0);
     if (cov <= 0.0) { discard; }
-    let w = pow(bands, vec3<f32>(3.0));
+    let w = pow(bands, vec3<f32>(4.0));
     let s = max(w.x + w.y + w.z, 1e-3);
     let col = (u.low.rgb * w.x + u.mid.rgb * w.y + u.high.rgb * w.z) / s;
     let core = clamp(rms * half - d + 0.5, 0.0, 1.0);
-    let rgb = mix(col * 0.75, mix(col, vec3<f32>(1.0), 0.3), core);
+    let rgb = mix(col * 0.9, mix(col, vec3<f32>(1.0), 0.18), core);
     return vec4<f32>(rgb, in.params.w * cov);
 }
 "#;

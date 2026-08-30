@@ -20,6 +20,8 @@ struct RtData {
     channels: usize,
     rate: u32,
     last: Option<Instant>,
+    /// Frames in the previous block: the gap to this callback is *its* duration.
+    last_frames: usize,
     /// Scratch f32 block; PipeWire's buffer is bytes, we render here then copy.
     scratch: Vec<f32>,
     ftz_done: bool,
@@ -70,6 +72,7 @@ impl AudioHost {
             channels: config.channels as usize,
             rate: config.rate,
             last: None,
+            last_frames: 0,
             scratch: vec![0.0; 8192 * config.channels as usize],
             ftz_done: false,
         };
@@ -186,13 +189,14 @@ fn process(stream: &pw::stream::Stream, d: &mut RtData) {
     *chunk.size_mut() = (frames * stride) as u32;
 
     d.status.block.store(frames as u32, Ordering::Relaxed);
-    if let Some(last) = d.last {
-        let expect = frames as f64 / d.rate.max(1) as f64;
+    if let (Some(last), true) = (d.last, d.last_frames > 0) {
+        let expect = d.last_frames as f64 / d.rate.max(1) as f64;
         if (now - last).as_secs_f64() > expect * 1.5 + 0.001 {
             d.status.late.fetch_add(1, Ordering::Relaxed);
         }
     }
     d.last = Some(now);
+    d.last_frames = frames;
 }
 
 /// SPA `EnumFormat` pod for interleaved f32 at the configured rate/channels.
